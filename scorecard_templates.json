@@ -1,0 +1,1925 @@
+{
+    "default_template_key": "generic_majelis_v1",
+    "templates": [
+        {
+            "template_key": "ketua_majelis_v1",
+            "title": "Scorecard Wawancara Ketua Majelis",
+            "version": 1,
+            "bidang_titles": [
+                "Ketua Majelis"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Apakah teologi kandidat hidup dan berdampak pada cara pandangnya terhadap pelayanan?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Definisi Gospel-Centered",
+                            "low_indicator": [
+                                "Jawaban bersifat moralis atau legalis.",
+                                "Melihat Injil hanya sebagai pintu masuk keselamatan, bukan pola hidup."
+                            ],
+                            "high_indicator": [
+                                "Memahami Injil sebagai kuasa yang mengubahkan, bukan sekadar aturan.",
+                                "Kasih karunia Allah menjadi motivasi pelayanan, bukan rasa bersalah atau kewajiban semata."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Kedaulatan Allah vs Tanggung Jawab",
+                            "low_indicator": [
+                                "Terlalu pasif atau fatalis dengan alasan menunggu Tuhan.",
+                                "Terlalu mengandalkan strategi manusia tanpa doa dan ketergantungan pada Tuhan."
+                            ],
+                            "high_indicator": [
+                                "Seimbang antara perencanaan yang matang dan penyerahan pada providensia Allah.",
+                                "Melihat strategi sebagai wujud tanggung jawab di hadapan Tuhan."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Identitas Reformed",
+                            "low_indicator": [
+                                "Hanya menguasai istilah akademis namun kaku atau sombong dalam aplikasinya.",
+                                "Doktrin tidak terlihat membentuk penggembalaan dan kerendahan hati."
+                            ],
+                            "high_indicator": [
+                                "Memegang teguh doktrin Reformed dengan hati yang hangat dan rendah hati.",
+                                "Mampu mengaplikasikan doktrin dalam penggembalaan yang nyata."
+                            ]
+                        },
+                        {
+                            "id": "A4",
+                            "label": "Respon Isu Kontemporer",
+                            "low_indicator": [
+                                "Jawaban pragmatis ikut arus zaman atau sangat menghakimi tanpa kasih.",
+                                "Tidak memiliki landasan Alkitab yang kuat."
+                            ],
+                            "high_indicator": [
+                                "Berpegang pada otoritas Alkitab namun menyampaikannya dengan hikmat dan kasih.",
+                                "Mampu speaking truth in love tanpa mengorbankan prinsip."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Spiritualitas",
+                    "focus": "Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh yang nyata?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Kehidupan Doa Pribadi",
+                            "low_indicator": [
+                                "Jawaban klise atau umum dan terlihat mengandalkan kekuatan sendiri.",
+                                "Tidak dapat menceritakan pengalaman rohani pribadi yang aktual."
+                            ],
+                            "high_indicator": [
+                                "Jujur, rutin, dan menjadikan doa sebagai napas pelayanan.",
+                                "Terlihat memiliki relasi yang hidup dengan Tuhan."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Kegagalan & Pertobatan",
+                            "low_indicator": [
+                                "Defensif, menyalahkan orang lain, atau mengaku tidak pernah gagal.",
+                                "Tidak terlihat adanya pertobatan yang hancur hati."
+                            ],
+                            "high_indicator": [
+                                "Terbuka mengakui kelemahan dan tidak menyembunyikan dosa.",
+                                "Menunjukkan bagaimana Injil memulihkan dan menguatkan untuk bangkit."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Manajemen Keluarga",
+                            "low_indicator": [
+                                "Menganggap pelayanan gereja lebih suci daripada keluarga.",
+                                "Istri atau anak terlihat sebagai beban pelayanan."
+                            ],
+                            "high_indicator": [
+                                "Menempatkan keluarga sebagai pelayanan utama.",
+                                "Ada keseimbangan sehat dan dukungan penuh dari keluarga."
+                            ]
+                        },
+                        {
+                            "id": "B4",
+                            "label": "Ketahanan Terhadap Kritik",
+                            "low_indicator": [
+                                "Menjadi pahit, defensif, atau merasa diserang secara personal.",
+                                "Tidak stabil saat menerima kritik dari sesama majelis."
+                            ],
+                            "high_indicator": [
+                                "Merespons kritik dengan hikmat dan penguasaan diri.",
+                                "Tetap stabil secara rohani di tengah perbedaan pendapat."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Gaya Kepemimpinan",
+                            "low_indicator": [
+                                "Otoriter, dominan, atau sebaliknya pasif dan takut mengambil keputusan.",
+                                "Cenderung menjadi people pleaser atau one man show."
+                            ],
+                            "high_indicator": [
+                                "Fasilitator yang baik dan mampu membangun konsensus.",
+                                "Tegas namun lembut dalam memimpin."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Pengambilan Keputusan",
+                            "low_indicator": [
+                                "Memaksakan pendapat atau terlalu bimbang sehingga tidak ada keputusan.",
+                                "Tidak menghargai proses kolektif-kolegial."
+                            ],
+                            "high_indicator": [
+                                "Memandu proses keputusan secara kolektif-kolegial.",
+                                "Berani mengambil keputusan sulit setelah mendengar masukan."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Resolusi Konflik",
+                            "low_indicator": [
+                                "Menghindari konflik atau memihak tanpa objektivitas.",
+                                "Emosional dan tidak mencari akar masalah."
+                            ],
+                            "high_indicator": [
+                                "Mengedepankan rekonsiliasi dan objektivitas.",
+                                "Mengutamakan keutuhan tubuh Kristus dan kebenaran."
+                            ]
+                        },
+                        {
+                            "id": "C4",
+                            "label": "Delegasi & Kaderisasi",
+                            "low_indicator": [
+                                "One-man show dan sulit mempercayai orang lain.",
+                                "Tidak memikirkan penerus atau pemimpin muda."
+                            ],
+                            "high_indicator": [
+                                "Mampu mempercayakan tugas sesuai karunia rekan lain.",
+                                "Aktif memberdayakan dan membimbing pemimpin muda."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Disiplin Gereja",
+                            "low_indicator": [
+                                "Terlalu kejam tanpa pendampingan atau terlalu permisif demi alasan kasih.",
+                                "Tidak menyeimbangkan kekudusan dan pemulihan."
+                            ],
+                            "high_indicator": [
+                                "Seimbang antara kekudusan Allah dan kasih pengampunan.",
+                                "Prosedural sesuai tata gereja namun tetap pastoral dan memulihkan."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Visi vs Tradisi",
+                            "low_indicator": [
+                                "Memaksakan perubahan tanpa peduli jemaat lama atau menyerah total pada tradisi yang kaku.",
+                                "Tidak komunikatif dalam proses perubahan."
+                            ],
+                            "high_indicator": [
+                                "Mencari jalan tengah tanpa mengorbankan prinsip.",
+                                "Sabar dalam perubahan dan komunikatif terhadap seluruh pihak."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "bidang_pemuridan_v1",
+            "title": "Scorecard Wawancara Majelis Bidang Pemuridan",
+            "version": 1,
+            "bidang_titles": [
+                "Majelis Bidang Pemuridan"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Apakah teologi kandidat hidup dan berdampak pada cara pandangnya terhadap pelayanan?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Definisi Murid",
+                            "low_indicator": [
+                                "Menitikberatkan hanya pada pengetahuan atau aktivitas tanpa perubahan karakter."
+                            ],
+                            "high_indicator": [
+                                "Memahami kedewasaan murid sebagai perubahan karakter yang holistik, bukan sekadar teori."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Peran Injil dalam Pertumbuhan",
+                            "low_indicator": [
+                                "Menganggap Injil hanya untuk keselamatan awal, bukan untuk pengudusan sehari-hari."
+                            ],
+                            "high_indicator": [
+                                "Mampu mengajarkan Injil sebagai kuasa transformasi atau pengudusan bagi orang percaya."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Hukum dan Kasih Karunia",
+                            "low_indicator": [
+                                "Terlalu legalistik atau menghakimi, atau terlalu permisif dan meremehkan dosa."
+                            ],
+                            "high_indicator": [
+                                "Seimbang dalam memberikan peringatan Hukum Taurat dan penghiburan Injil."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Spiritualitas",
+                    "focus": "Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Kehidupan Doa Pribadi",
+                            "low_indicator": [
+                                "Jawaban klise atau umum. Terlihat mengandalkan kekuatan sendiri.",
+                                "Tidak bisa menceritakan pengalaman rohani pribadi terkini."
+                            ],
+                            "high_indicator": [
+                                "Jujur, rutin, dan menjadikan doa sebagai sandaran utama atau napas pelayanan.",
+                                "Ada relasi yang hidup dengan Tuhan."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Kegagalan & Pertobatan",
+                            "low_indicator": [
+                                "Defensif, menyalahkan orang lain atau keadaan, atau mengaku tidak pernah gagal.",
+                                "Tidak terlihat adanya pertobatan yang hancur hati."
+                            ],
+                            "high_indicator": [
+                                "Terbuka mengakui kelemahan.",
+                                "Menunjukkan bagaimana Injil memulihkan dan memberikan kekuatan untuk bangkit.",
+                                "Tidak menyembunyikan dosa."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Kegagalan dalam Membentuk Orang",
+                            "low_indicator": [
+                                "Cenderung menyalahkan keadaan atau orang lain, dan tidak terlihat refleksi diri atas kegagalan masa lalu."
+                            ],
+                            "high_indicator": [
+                                "Mampu menganalisis kesalahan diri sendiri dalam memuridkan.",
+                                "Menunjukkan kerendahan hati untuk belajar dari kegagalan."
+                            ]
+                        },
+                        {
+                            "id": "B4",
+                            "label": "Manajemen Keluarga",
+                            "low_indicator": [
+                                "Menganggap pelayanan gereja lebih suci daripada keluarga.",
+                                "Istri atau anak terlihat sebagai beban pelayanan."
+                            ],
+                            "high_indicator": [
+                                "Menempatkan keluarga sebagai pelayanan utama.",
+                                "Ada keseimbangan sehat dan dukungan penuh dari keluarga."
+                            ]
+                        },
+                        {
+                            "id": "B5",
+                            "label": "Respon terhadap Kritik",
+                            "low_indicator": [
+                                "Menjadi pahit hati, defensif, atau emosional saat ditegur atau dikritik tajam."
+                            ],
+                            "high_indicator": [
+                                "Merespons kritik dengan hikmat tanpa menjadi pahit hati.",
+                                "Menunjukkan spiritualitas yang stabil."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat (Primus Inter Pares).",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Gaya Kepemimpinan",
+                            "low_indicator": [
+                                "Otoriter, dominan, atau sebaliknya pasif atau takut mengambil keputusan (people pleaser)."
+                            ],
+                            "high_indicator": [
+                                "Fasilitator yang baik, mampu mendengar, mensintesis pendapat berbeda, dan membangun konsensus.",
+                                "Tegas namun lembut."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Pengambilan Keputusan",
+                            "low_indicator": [
+                                "Dominan dalam memutuskan dan suara minoritas cenderung diabaikan."
+                            ],
+                            "high_indicator": [
+                                "Memastikan proses diskusi yang sehat dan mendengarkan suara minoritas sebelum keputusan."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Resolusi Konflik",
+                            "low_indicator": [
+                                "Menghindari konflik atau tidak menanganinya dengan objektif dan tenang."
+                            ],
+                            "high_indicator": [
+                                "Mampu menghadapi ketegangan dengan kepala dingin.",
+                                "Melakukan mediasi yang bertujuan pada rekonsiliasi dan kebenaran."
+                            ]
+                        },
+                        {
+                            "id": "C4",
+                            "label": "Delegasi & Kaderisasi",
+                            "low_indicator": [
+                                "Cenderung mengerjakan semuanya sendiri atau one-man show.",
+                                "Tidak memiliki rencana atau minat untuk melatih penerus."
+                            ],
+                            "high_indicator": [
+                                "Memiliki strategi yang jelas dalam pendelegasian.",
+                                "Aktif menyiapkan dan memuridkan pemimpin masa depan atau regenerasi."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Kasus Katekisasi",
+                            "low_indicator": [
+                                "Hanya menilai aspek intelektual tanpa peduli pada kesombongan karakter."
+                            ],
+                            "high_indicator": [
+                                "Menomorsatukan karakter Kristen.",
+                                "Menangani kesombongan dengan pendekatan pastoral."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Kasus Materi Luar",
+                            "low_indicator": [
+                                "Langsung menolak tanpa alasan teologis atau terlalu permisif pada materi dangkal."
+                            ],
+                            "high_indicator": [
+                                "Memberikan respons yang berpegang pada prinsip teologis namun tetap solutif dan bijak."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "sekretaris_majelis_v1",
+            "title": "Scorecard Wawancara Sekretaris Majelis",
+            "version": 1,
+            "bidang_titles": [
+                "Sekretaris Majelis"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Apakah teologi kandidat hidup dan berdampak pada cara pandangnya terhadap pelayanan?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Teologi Keteraturan",
+                            "low_indicator": [
+                                "Menganggap administrasi hanya beban birokrasi. Yang penting Roh Kudus bekerja dan tidak perlu catat-mencatat."
+                            ],
+                            "high_indicator": [
+                                "Memahami bahwa Allah itu tertib.",
+                                "Melihat administrasi yang rapi sebagai cara menghormati Allah dan melayani jemaat."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Administrasi sebagai Pelayanan",
+                            "low_indicator": [
+                                "Melihat administrasi hanya sebagai rutinitas teknis yang terpisah dari kerohanian."
+                            ],
+                            "high_indicator": [
+                                "Menekankan kasih karunia Allah sebagai motivasi utama dalam mengerjakan ketelitian administrasi."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Sikap terhadap Tata Gereja",
+                            "low_indicator": [
+                                "Menganggap aturan bisa dilanggar asal tujuan baik atau bersikap pragmatis."
+                            ],
+                            "high_indicator": [
+                                "Menjunjung tinggi Tata Gereja sebagai pagar pelindung keadilan dan kebenaran."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Integritas",
+                    "focus": "Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh?",
+                    "weight": 0.35,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Menjaga Rahasia",
+                            "low_indicator": [
+                                "Bocor alus, suka bergosip, atau terlihat ingin tahu urusan orang lain.",
+                                "Menganggap berbagi info ke pasangan itu wajar padahal termasuk rahasia jabatan."
+                            ],
+                            "high_indicator": [
+                                "Mulut terkunci rapat dan memiliki rekam jejak integritas tinggi.",
+                                "Sangat berhati-hati dengan data sensitif."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Ketelitian sebagai Ibadah",
+                            "low_indicator": [
+                                "Melihat kesalahan data hanya sebagai masalah kecil yang lazim terjadi dan tidak ada hubungannya dengan integritas rohani.",
+                                "Defensif serta cenderung memaklumi kesalahan dengan alasan kelelahan atau menyalahkan keadaan."
+                            ],
+                            "high_indicator": [
+                                "Tegas melihat bahwa data yang hilang atau salah adalah masalah integritas serius dalam menyajikan kebenaran bagi jemaat.",
+                                "Memahami bahwa ketelitian adalah bentuk ibadah dan cerminan karakter Allah yang tertib atau teratur."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Netralitas",
+                            "low_indicator": [
+                                "Notulen cenderung bias memihak pendapatnya sendiri dan emosional."
+                            ],
+                            "high_indicator": [
+                                "Mampu memisahkan opini pribadi dari fakta keputusan.",
+                                "Menjadi penulis sejarah yang jujur."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat (Primus Inter Pares).",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Skill Menulis",
+                            "low_indicator": [
+                                "Kalimat berantakan, ambigu, atau terlalu panjang dan sulit dipahami."
+                            ],
+                            "high_indicator": [
+                                "Ringkas, padat, dan jelas.",
+                                "Mampu menangkap poin teologis yang rumit dengan bahasa sederhana."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Manajemen Arsip",
+                            "low_indicator": [
+                                "Tidak rapi, berantakan, atau gaptek."
+                            ],
+                            "high_indicator": [
+                                "Sangat terorganisir, menguasai sistem digital, dan memiliki pola pikir sistematis."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Korespondensi Sulit",
+                            "low_indicator": [
+                                "Tidak objektif dan memihak salah satu kubu tanpa mencari akar masalah yang sebenarnya dalam penyusunan surat."
+                            ],
+                            "high_indicator": [
+                                "Mampu menyampaikan kebenaran atau teguran yang objektif berdasarkan prinsip Firman Tuhan.",
+                                "Tetap menyampaikannya dengan hikmat dan kasih atau speaking truth in love."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Sengketa Keputusan",
+                            "low_indicator": [
+                                "Menyalahkan situasi atau beban kerja atas keterlambatan notulen.",
+                                "Tidak melihat dampak kekacauan administratif terhadap kesatuan majelis."
+                            ],
+                            "high_indicator": [
+                                "Berani mengakui kesalahan administratif dan menunjukkan pertobatan yang jujur tanpa membela diri.",
+                                "Menjelaskan langkah konkret agar keterlambatan notulen tidak terulang."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Akses Data",
+                            "low_indicator": [
+                                "Cenderung memberikan data karena rasa takut atau hormat yang salah kepada donatur besar.",
+                                "Menolak dengan cara yang menyinggung perasaan jemaat tanpa alasan prosedural yang benar."
+                            ],
+                            "high_indicator": [
+                                "Menolak dengan tegas berdasarkan Tata Gereja dan prinsip kerahasiaan demi melindungi jemaat serta tidak membeda-bedakan status jemaat.",
+                                "Menolak sambil memberikan penjelasan yang bijaksana mengapa data jemaat tidak boleh disalahgunakan."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "bendahara_majelis_v1",
+            "title": "Scorecard Wawancara Bendahara Majelis",
+            "version": 1,
+            "bidang_titles": [
+                "Bendahara Majelis"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Apakah teologi kandidat hidup dan berdampak pada cara pandangnya terhadap pelayanan?",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Teologi Uang",
+                            "low_indicator": [
+                                "Melihat gereja seperti perusahaan yang harus profit atau surplus besar.",
+                                "Pelit untuk pengeluaran misi atau diakonia."
+                            ],
+                            "high_indicator": [
+                                "Melihat uang sebagai alat atau sarana, bukan tujuan.",
+                                "Berani berinvestasi untuk kekekalan namun tetap bijaksana atau prudent."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Iman vs Logika",
+                            "low_indicator": [
+                                "Sangat ketakutan atau cemas jika saldo turun.",
+                                "Tidak ada unsur iman dalam perencanaan."
+                            ],
+                            "high_indicator": [
+                                "Seimbang dalam melakukan perhitungan matang seperti Lukas 14:28.",
+                                "Tetap bersandar pada pemeliharaan Allah."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Pandangan tentang Persembahan",
+                            "low_indicator": [
+                                "Legalistik atau komersial. Melihat persembahan hanya sebagai kewajiban aturan atau semacam investasi agar mendapat berkat materi kembali.",
+                                "Hanya memahami teori atau doktrin persembahan secara akademis tetapi tidak mempraktikkannya dalam kehidupan pribadi."
+                            ],
+                            "high_indicator": [
+                                "Mempraktikkan persembahan sebagai pola hidup yang rutin dan jujur, menunjukkan relasi yang hidup dengan Tuhan dalam pengelolaan harta.",
+                                "Memahami bahwa memberi persembahan adalah respons syukur atas kasih karunia Allah di dalam Kristus, bukan karena rasa bersalah atau paksaan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Integritas",
+                    "focus": "Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh?",
+                    "weight": 0.35,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Ujian Integritas",
+                            "low_indicator": [
+                                "Menolak tanpa memberikan penjelasan yang membangun atau dukungan terhadap visi pelayanan rekan tersebut.",
+                                "Cenderung memberikan dana meskipun melanggar anggaran hanya demi menjaga perasaan atau menghindari perdebatan.",
+                                "Mengabaikan prosedur Tata Gereja atau anggaran demi kelancaran sesaat."
+                            ],
+                            "high_indicator": [
+                                "Mampu mendengar kebutuhan rekan majelis, mensintesis masalah, dan mencari solusi alternatif agar visi pelayanan tetap berjalan meskipun dana terbatas.",
+                                "Menolak berdasarkan kebenaran data dan anggaran gereja, namun menyampaikannya dengan hikmat dan kasih atau speaking truth in love."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Gaya Hidup",
+                            "low_indicator": [
+                                "Ada indikasi gaya hidup boros atau besar pasak daripada tiang.",
+                                "Terlilit hutang bermasalah.",
+                                "Bersikap permisif terhadap uang abu-abu."
+                            ],
+                            "high_indicator": [
+                                "Hidup sederhana dan bersahaja.",
+                                "Rekam jejak keuangan pribadi bersih.",
+                                "Dikenal jujur dan transparan oleh komunitas."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Ketegasan yang Kudus",
+                            "low_indicator": [
+                                "Asal bapak senang; takut menolak pengajuan dana atasan atau senior."
+                            ],
+                            "high_indicator": [
+                                "Berani berkata tidak pada pengeluaran yang melanggar prosedur atau anggaran, dengan cara yang santun dan berdasar."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat (Primus Inter Pares).",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Sistem Kontrol",
+                            "low_indicator": [
+                                "Naif dan hanya berpikir kita saling percaya saja.",
+                                "Tidak mau repot membuat sistem."
+                            ],
+                            "high_indicator": [
+                                "Proaktif membangun sistem check and balance seperti dual signatory di bank dan cash opname rutin."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Pelaporan",
+                            "low_indicator": [
+                                "Tidak paham debit atau kredit.",
+                                "Tidak bisa membaca neraca.",
+                                "Mengandalkan catatan warung."
+                            ],
+                            "high_indicator": [
+                                "Memahami standar akuntansi nirlaba.",
+                                "Mampu menganalisis kesehatan finansial dari laporan seperti rasio likuiditas dan solvabilitas."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Investasi Dana",
+                            "low_indicator": [
+                                "Mengusulkan investasi yang berisiko tinggi demi keuntungan materi semata.",
+                                "Atau sebaliknya menyimpan dana tanpa tujuan pelayanan yang jelas seperti hamba yang memendam talenta."
+                            ],
+                            "high_indicator": [
+                                "Mengusulkan kebijakan yang menjaga keseimbangan antara cadangan darurat dan penyaluran dana secara strategis untuk pemberitaan Injil serta pemulihan jemaat sesuai visi gereja."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Donatur Pengatur",
+                            "low_indicator": [
+                                "Menerima sumbangan karena nilai nominalnya besar tanpa mempertimbangkan prinsip kerendahan hati dalam memberi atau otonomi gereja dalam menentukan prioritas pelayanan."
+                            ],
+                            "high_indicator": [
+                                "Menolak syarat tersebut dengan hikmat berdasarkan prinsip Alkitab, sambil menjelaskan bahwa persembahan adalah bentuk syukur kepada Tuhan tanpa pamrih dan bukan untuk publikasi nama.",
+                                "Mengarahkan donatur untuk mendukung visi kebutuhan gereja yang lebih mendesak."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Defisit",
+                            "low_indicator": [
+                                "Mengusulkan pemotongan anggaran secara acak tanpa dasar teologis.",
+                                "Sekadar mengandalkan kekuatan manusia seperti mencari utang tanpa transparansi kondisi keuangan kepada jemaat."
+                            ],
+                            "high_indicator": [
+                                "Mengusulkan evaluasi prioritas program atau efisiensi yang berbasis pada visi pelayanan.",
+                                "Dibarengi komunikasi terbuka kepada jemaat melalui pendekatan pastoral untuk mengajak mereka berpartisipasi dalam pergumulan keuangan gereja sebagai satu tubuh."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "bidang_misi_v1",
+            "title": "Scorecard Wawancara Majelis Bidang Misi",
+            "version": 1,
+            "bidang_titles": [
+                "Majelis Bidang Misi"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Kedaulatan Allah sebagai bahan bakar misi.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Predestinasi & Penginjilan",
+                            "low_indicator": [
+                                "Bingung melihat paradoks dan cenderung hiper-Calvinis atau Arminian.",
+                                "Berpikir tidak perlu menginjil atau sebaliknya Tuhan tidak berdaya tanpa kita."
+                            ],
+                            "high_indicator": [
+                                "Paham bahwa predestinasi adalah jaminan keberhasilan misi karena pasti ada domba lain.",
+                                "Memahami bahwa penginjilan adalah ketaatan pada sarana Allah."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Definisi Sukses Misi",
+                            "low_indicator": [
+                                "Antroposentris dan hanya kasihan pada manusia.",
+                                "Mengukur sukses hanya dari angka statistik."
+                            ],
+                            "high_indicator": [
+                                "Teosentris dan berorientasi pada kemuliaan Allah di antara bangsa-bangsa.",
+                                "Fokus pada kesetiaan proklamasi Injil yang murni."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Kontekstualisasi",
+                            "low_indicator": [
+                                "Gagal membedakan antara metode atau cara penyampaian dan esensi atau isi Injil.",
+                                "Cenderung ekstrem ke salah satu sisi, baik legalistik total maupun terlalu liberal."
+                            ],
+                            "high_indicator": [
+                                "Mampu menegaskan bahwa bentuk budaya boleh berubah.",
+                                "Kebenaran Alkitabiah seperti salib dan pertobatan tetap absolut dan tidak boleh dikurangi."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Integritas",
+                    "focus": "Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh?",
+                    "weight": 0.35,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Beban Jiwa",
+                            "low_indicator": [
+                                "Dingin dan bicara misi hanya sebagai program kerja atau anggaran.",
+                                "Tidak ada emosi rohani."
+                            ],
+                            "high_indicator": [
+                                "Memiliki kegelisahan suci melihat orang terhilang.",
+                                "Kehidupan doanya diwarnai syafaat bagi bangsa-bangsa."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Ketahanan Mental",
+                            "low_indicator": [
+                                "Cenderung bergantung pada keberhasilan hasil seperti angka atau statistik, atau pada kekuatan diri sendiri.",
+                                "Rentan mengalami burnout saat menghadapi kegagalan."
+                            ],
+                            "high_indicator": [
+                                "Memiliki kedisiplinan spiritual yang baik.",
+                                "Memahami bahwa misi adalah milik Tuhan sehingga harapannya berakar pada kedaulatan Tuhan, bukan pada situasi lapangan."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Pengorbanan",
+                            "low_indicator": [
+                                "Penakut dan terlalu hitung-hitungan untung rugi duniawi."
+                            ],
+                            "high_indicator": [
+                                "Berani mengambil risiko iman yang terukur.",
+                                "Rela berkorban dana dan daya."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat (Primus Inter Pares).",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Member Care",
+                            "low_indicator": [
+                                "Menganggap misionaris sebagai karyawan yang digaji.",
+                                "Jika performa turun, langsung berpikir memotong dana."
+                            ],
+                            "high_indicator": [
+                                "Menganggap misionaris sebagai mitra atau keluarga.",
+                                "Memahami kompleksitas tekanan psikologis di ladang dan siap mendampingi."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Strategi Lokal",
+                            "low_indicator": [
+                                "Menggunakan cara lama tanpa melihat konteks zaman."
+                            ],
+                            "high_indicator": [
+                                "Kreatif mencari celah masuk atau jembatan Injil yang relevan dengan budaya sasaran."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Perubahan Teologi",
+                            "low_indicator": [
+                                "Abai terhadap fondasi dan menyarankan untuk membiarkan demi menjaga angka misi.",
+                                "Atau langsung memutus hubungan secara kasar tanpa proses verifikasi dan pendampingan."
+                            ],
+                            "high_indicator": [
+                                "Menegaskan bahwa kesamaan doktrin adalah syarat dukungan.",
+                                "Tetap mengutamakan langkah dialog, investigasi, dan disiplin yang mengasihi sebelum memutuskan dana."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Penculikan / Intimidasi",
+                            "low_indicator": [
+                                "Hanya fokus pada satu sisi, misalnya hanya bicara mati martir tanpa strategi keamanan atau langsung kabur tanpa memikirkan pelayanan."
+                            ],
+                            "high_indicator": [
+                                "Mampu melakukan penilaian risiko atau risk assessment yang cepat.",
+                                "Mendengarkan suara jemaat lokal dan mencari solusi kreatif seperti relokasi sementara atau mediasi."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "bidang_diakonia_v1",
+            "title": "Scorecard Wawancara Majelis Bidang Diakonia",
+            "version": 1,
+            "bidang_titles": [
+                "Majelis Bidang Diakonia"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Apakah kandidat memahami diakonia sebagai wujud kasih Kristus yang berakar pada Injil?",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Teologi Diakonia",
+                            "low_indicator": [
+                                "Melihat diakonia hanya sebagai bagi-bagi sembako atau filantropi humanis.",
+                                "Tidak mengaitkannya dengan Injil."
+                            ],
+                            "high_indicator": [
+                                "Memahami diakonia sebagai wujud kasih Kristus.",
+                                "Pelayanan fisik dipahami sebagai jembatan atau bukti dari iman yang hidup."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Kemiskinan & Injil",
+                            "low_indicator": [
+                                "Menganggap kemiskinan hanya sebagai kutukan atau masalah sosial teknis tanpa perspektif Injil."
+                            ],
+                            "high_indicator": [
+                                "Memandang kemiskinan sebagai kesempatan misi.",
+                                "Mampu menjelaskan solusi Injil bagi orang miskin."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Prioritas Bantuan",
+                            "low_indicator": [
+                                "Bingung menentukan prioritas.",
+                                "Cenderung ingin menyenangkan semua orang luar demi pencitraan gereja."
+                            ],
+                            "high_indicator": [
+                                "Paham urutan prioritas Alkitabiah: keluarga sendiri, jemaat Tuhan, lalu masyarakat luas."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter: Belas Kasihan & Keteguhan",
+                    "focus": "Compassion with Backbone.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Hati Hamba",
+                            "low_indicator": [
+                                "Gengsi tinggi.",
+                                "Merasa pekerjaan fisik atau teknis merendahkan martabatnya.",
+                                "Ingin tampil di depan."
+                            ],
+                            "high_indicator": [
+                                "Bersedia melayani hal-hal kecil atau kotor dengan sukacita seperti cuci kaki.",
+                                "Tidak gila hormat."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Empati vs Ketegasan",
+                            "low_indicator": [
+                                "Memberi hanya karena merasa tidak enak hati atau kasihan sesaat tanpa memikirkan dampak jangka panjang.",
+                                "Justru menyuburkan ketergantungan atau enablement."
+                            ],
+                            "high_indicator": [
+                                "Mampu menahan diri dari memberi bantuan finansial yang salah.",
+                                "Menggantinya dengan bantuan bentuk lain seperti edukasi, pendampingan, atau lapangan kerja yang bertujuan memulihkan martabat orang tersebut."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Integritas Uang",
+                            "low_indicator": [
+                                "Ragu-ragu bicara soal transparansi uang.",
+                                "Ada riwayat ketidakjujuran kecil."
+                            ],
+                            "high_indicator": [
+                                "Sangat lurus soal uang.",
+                                "Punya prinsip bahwa ini bukan milikku, tetapi milik Tuhan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan & Tata Kelola",
+                    "focus": "Kompetensi sebagai yang utama di antara yang sederajat (Primus Inter Pares).",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Verifikasi Kasus",
+                            "low_indicator": [
+                                "Naif atau gampang ditipu air mata.",
+                                "Memberi bantuan tanpa cek latar belakang."
+                            ],
+                            "high_indicator": [
+                                "Cerdik seperti ular dan tulus seperti merpati.",
+                                "Punya insting detektif yang baik untuk memverifikasi fakta sebelum memberi."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Manajemen Aset",
+                            "low_indicator": [
+                                "Ceroboh dan tidak punya konsep perawatan atau maintenance.",
+                                "Berpikir rusak ya beli baru."
+                            ],
+                            "high_indicator": [
+                                "Memiliki sense of stewardship yang kuat terhadap barang milik gereja.",
+                                "Rapi dan teratur."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Mobilisasi Relawan",
+                            "low_indicator": [
+                                "Bergantung pada pengumuman mimbar yang bersifat umum atau memaksa secara legalistik.",
+                                "Tidak memahami hambatan psikologis jemaat yang sibuk."
+                            ],
+                            "high_indicator": [
+                                "Mampu mengemas pelayanan sebagai kesempatan pertumbuhan iman yang relevan bagi jemaat.",
+                                "Menyediakan sistem yang memudahkan mereka untuk terlibat sesuai kapasitas."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.2,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Manipulasi",
+                            "low_indicator": [
+                                "Memberi bantuan hanya karena takut akan ancaman seperti pindah gereja atau nama baik tercemar.",
+                                "Hal itu justru merusak sistem akuntabilitas gereja."
+                            ],
+                            "high_indicator": [
+                                "Tetap berpegang pada hasil verifikasi lapangan dan prosedur.",
+                                "Siap menghadapi konsekuensi reputasi demi menjaga keadilan bagi penerima bantuan lain."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Bencana",
+                            "low_indicator": [
+                                "Menolak membantu warga sekitar dengan alasan dana hanya untuk jemaat sendiri.",
+                                "Sikap itu menutup pintu kesaksian Injil di tengah masyarakat."
+                            ],
+                            "high_indicator": [
+                                "Menyadari bahwa krisis adalah peluang misi.",
+                                "Mampu mencari jalan keluar kreatif seperti mobilisasi dana tambahan atau kerja sama tanpa menelantarkan jemaat internal."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "bidang_ibadah_v1",
+            "title": "Scorecard Wawancara Majelis Bidang Ibadah",
+            "version": 1,
+            "bidang_titles": [
+                "Majelis Bidang Ibadah"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Teologi Ibadah.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Prinsip Regulatif",
+                            "low_indicator": [
+                                "Melihat ibadah sebagai konser rohani untuk menghibur jemaat.",
+                                "Pragmatis dan hanya mengejar keramaian."
+                            ],
+                            "high_indicator": [
+                                "Memahami ibadah sebagai dialog kovenantal.",
+                                "Sangat selektif terhadap lirik lagu demi kesehatan doktrin jemaat."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Musik & Emosi",
+                            "low_indicator": [
+                                "Mencari pengalaman emosional atau ekstatik semata.",
+                                "Mengukur keberhasilan ibadah dari berapa banyak yang menangis."
+                            ],
+                            "high_indicator": [
+                                "Menempatkan emosi sebagai respons terhadap kebenaran.",
+                                "Emosi dianggap penting, tetapi harus dituntun oleh akal budi dan Firman."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Gospel Centered Liturgy",
+                            "low_indicator": [
+                                "Hanya menyebut urutan acara tanpa bisa menjelaskan kaitan teologis antarbagian dengan karya Kristus."
+                            ],
+                            "high_indicator": [
+                                "Mampu menjelaskan liturgi sebagai pengulangan kisah Injil secara koheren.",
+                                "Memahami alur panggilan, pengakuan dosa, pengampunan, pengajaran, dan pengutusan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Spiritualitas",
+                    "focus": "Hati Penyembah.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Motivasi Pelayanan",
+                            "low_indicator": [
+                                "Terlihat narsis atau ingin dominan.",
+                                "Sulit menerima masukan soal selera musiknya."
+                            ],
+                            "high_indicator": [
+                                "Rendah hati dan fokus pada kemuliaan Tuhan, bukan performa timnya.",
+                                "Siap melayani di balik layar."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Kehidupan Ibadah Pribadi",
+                            "low_indicator": [
+                                "Persiapan ibadah hanya teknis seperti cek sound dan latihan lagu."
+                            ],
+                            "high_indicator": [
+                                "Persiapan ibadah dimulai dari doa dan pertobatan pribadi sebelum naik mimbar."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kompetensi Teknis & Managerial",
+                    "focus": "Leadership Seni.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Menangani Artis",
+                            "low_indicator": [
+                                "Takut menegur pemusik yang toxic.",
+                                "Atau sebaliknya otoriter hingga mematikan kreativitas."
+                            ],
+                            "high_indicator": [
+                                "Mampu mengarahkan talenta seni untuk tunduk pada visi gereja.",
+                                "Tegas terhadap indisipliner."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Regenerasi",
+                            "low_indicator": [
+                                "Tidak memiliki rencana jangka panjang.",
+                                "Pelayanan hanya bergantung pada orang-orang yang ada sekarang."
+                            ],
+                            "high_indicator": [
+                                "Memiliki strategi pelatihan anak-anak atau remaja.",
+                                "Aktif menyiapkan pemusik masa depan agar tidak terjadi kekosongan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat dalam worship war.",
+                    "weight": 0.2,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Lagu Populer",
+                            "low_indicator": [
+                                "Membiarkan karena yang penting jemaat senang.",
+                                "Atau melarang total tanpa memberi penjelasan edukatif kepada tim musik atau pemuda."
+                            ],
+                            "high_indicator": [
+                                "Mengutamakan ketepatan teologis dengan cara mengedukasi tim musik.",
+                                "Memilih opsi yang paling bertanggung jawab seperti mengubah lirik jika memungkinkan atau mengganti lagu dengan penjelasan."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Konflik Generasi",
+                            "low_indicator": [
+                                "Hanya memenangkan salah satu pihak atau membiarkan konflik berlarut-larut."
+                            ],
+                            "high_indicator": [
+                                "Mampu merancang solusi yang menghargai warisan iman tradisional sekaligus menyambut masa depan kontemporer.",
+                                "Berkomunikasi dengan empati."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "ketua_pengurus_lokal_v1",
+            "title": "Scorecard Wawancara Ketua Pengurus Lokal",
+            "version": 1,
+            "bidang_titles": [
+                "Ketua Pengurus Lokal",
+                "Ketua Pengurus Wilayah / Lokal"
+            ],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1.0,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5.0,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Kesesuaian Teologis & Visi",
+                    "focus": "Tunduk pada otoritas dan kesatuan.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Relasi Pusat-Cabang",
+                            "low_indicator": [
+                                "Merasa bisa memutuskan segala hal sendiri seperti sistem independen.",
+                                "Atau sebaliknya terlalu pasif menunggu perintah pusat tanpa inisiatif sama sekali."
+                            ],
+                            "high_indicator": [
+                                "Memahami bahwa keputusan strategis atau doktrinal mengikuti Sinode atau Majelis Pusat.",
+                                "Keputusan taktis pelayanan dipahami sebagai tanggung jawabnya dengan tetap melapor."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Visi Penggembalaan",
+                            "low_indicator": [
+                                "Cenderung lebih dekat dengan kelompok kaya karena donasi atau hanya fokus pada yang miskin.",
+                                "Tidak ada upaya aktif menciptakan persekutuan yang setara."
+                            ],
+                            "high_indicator": [
+                                "Menekankan bahwa nilai seseorang bukan pada status sosial, tetapi pada identitas dalam Kristus.",
+                                "Mampu menciptakan ruang di mana semua pihak saling melayani."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Bahaya Raja Kecil",
+                            "low_indicator": [
+                                "Merasa kondisi lapangan adalah alasan mutlak untuk mengabaikan aturan pusat.",
+                                "Sulit menerima kritik atau supervisi dari Majelis Pusat."
+                            ],
+                            "high_indicator": [
+                                "Menyadari bahwa kepemimpinan adalah amanah.",
+                                "Mengutamakan komunikasi yang jujur ke pusat dan melihat aturan organisasi sebagai perlindungan, bukan beban."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Spiritualitas",
+                    "focus": "Hospitality & Patience.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Rumah Terbuka",
+                            "low_indicator": [
+                                "Kaku, birokratis, atau tertutup.",
+                                "Merasa terganggu jika dihubungi jemaat."
+                            ],
+                            "high_indicator": [
+                                "Hangat dan approachable.",
+                                "Punya hati yang melayani sehingga jemaat merasa aman curhat padanya."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Menghadapi Gosip",
+                            "low_indicator": [
+                                "Ikut menyebarkan gosip atau mudah tersinggung."
+                            ],
+                            "high_indicator": [
+                                "Menjadi peredam konflik.",
+                                "Banyak mendengar dan hati-hati bicara."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Ketenangan",
+                            "low_indicator": [
+                                "Mudah tersinggung atau reaktif saat usulannya ditolak oleh anggota pengurus yang vokal."
+                            ],
+                            "high_indicator": [
+                                "Tetap tenang dan dewasa secara emosional meski menghadapi perbedaan pendapat atau penolakan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kepemimpinan Komunitas",
+                    "focus": "Mobilisasi & Organizing.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Mobilisasi Relawan",
+                            "low_indicator": [
+                                "One-man show karena tidak percaya orang lain.",
+                                "Mengeluh kurang orang."
+                            ],
+                            "high_indicator": [
+                                "Mampu mendelegasikan tugas.",
+                                "Jago melihat potensi jemaat awam dan memberdayakannya."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Manajemen Konflik Lokal",
+                            "low_indicator": [
+                                "Berantakan dan sering chaos saat acara wilayah."
+                            ],
+                            "high_indicator": [
+                                "Terorganisir.",
+                                "Ibadah wilayah berjalan rapi, hikmat, dan teratur."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus / Penyelesaian Masalah",
+                    "focus": "Hikmat praktis dalam situasi nyata.",
+                    "weight": 0.2,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Kebijakan Pusat",
+                            "low_indicator": [
+                                "Memilih salah satu sisi secara ekstrem, misalnya ikut menjelekkan pusat di depan jemaat agar disukai.",
+                                "Atau memaksa jemaat secara otoriter tanpa mendengar aspirasi."
+                            ],
+                            "high_indicator": [
+                                "Mampu mengedukasi jemaat mengenai alasan kebijakan pusat dengan sabar.",
+                                "Tetap berkomitmen membawa aspirasi jemaat kembali ke pusat melalui jalur resmi."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Krisis Darurat",
+                            "low_indicator": [
+                                "Terlalu lama menunggu instruksi dan membiarkan jemaat telantar tanpa kepastian.",
+                                "Atau hanya sekadar membatalkan acara tanpa solusi."
+                            ],
+                            "high_indicator": [
+                                "Mampu mengambil keputusan instan untuk menjaga kekhidmatan ibadah.",
+                                "Bisa mengganti sesi dengan kesaksian, doa bersama, atau kandidat sendiri yang mengisi."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "template_key": "generic_majelis_v1",
+            "title": "Scorecard Wawancara Majelis",
+            "version": 1,
+            "bidang_titles": [],
+            "decision_options": [
+                "Sangat Direkomendasikan",
+                "Direkomendasikan dengan Catatan",
+                "Dipertimbangkan Kembali (Hold)",
+                "Tidak Direkomendasikan"
+            ],
+            "final_ranges": [
+                {
+                    "min": 1,
+                    "max": 1.8,
+                    "label": "Sangat Tidak Direkomendasikan"
+                },
+                {
+                    "min": 1.81,
+                    "max": 2.6,
+                    "label": "Tidak Direkomendasikan"
+                },
+                {
+                    "min": 2.61,
+                    "max": 3.4,
+                    "label": "Dipertimbangkan Kembali"
+                },
+                {
+                    "min": 3.41,
+                    "max": 4.2,
+                    "label": "Direkomendasikan"
+                },
+                {
+                    "min": 4.21,
+                    "max": 5,
+                    "label": "Sangat Direkomendasikan"
+                }
+            ],
+            "sections": [
+                {
+                    "id": "A",
+                    "title": "Panggilan & Visi Pelayanan",
+                    "focus": "Seberapa jelas kandidat memahami panggilan dan arah pelayanan pada bidang ini.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian A",
+                    "questions": [
+                        {
+                            "id": "A1",
+                            "label": "Pemahaman Peran Bidang",
+                            "low_indicator": [
+                                "Tidak memahami tanggung jawab inti bidang yang dilamar.",
+                                "Jawaban terlalu umum dan tidak menyentuh kebutuhan pelayanan nyata."
+                            ],
+                            "high_indicator": [
+                                "Memahami mandat, prioritas, dan tantangan inti bidang secara jelas.",
+                                "Mampu menjelaskan kontribusi spesifik yang relevan dengan bidang."
+                            ]
+                        },
+                        {
+                            "id": "A2",
+                            "label": "Visi Pelayanan",
+                            "low_indicator": [
+                                "Tidak memiliki arah pelayanan yang jelas.",
+                                "Visi hanya berupa slogan tanpa langkah yang realistis."
+                            ],
+                            "high_indicator": [
+                                "Memiliki visi yang jelas, realistis, dan terukur.",
+                                "Visi selaras dengan kebutuhan jemaat dan arah gereja."
+                            ]
+                        },
+                        {
+                            "id": "A3",
+                            "label": "Landasan Alkitabiah",
+                            "low_indicator": [
+                                "Jawaban pragmatis tanpa dasar Alkitab yang kuat.",
+                                "Sulit menjelaskan alasan rohani di balik arah pelayanannya."
+                            ],
+                            "high_indicator": [
+                                "Menunjukkan pemikiran yang berakar pada Firman Tuhan.",
+                                "Mampu menghubungkan prinsip Alkitab dengan praktik pelayanan."
+                            ]
+                        },
+                        {
+                            "id": "A4",
+                            "label": "Keselarasan dengan Tim Majelis",
+                            "low_indicator": [
+                                "Berpikir sangat individual dan kurang terbuka pada arah bersama.",
+                                "Sulit melihat bidangnya sebagai bagian dari tubuh yang lebih besar."
+                            ],
+                            "high_indicator": [
+                                "Melihat bidangnya sebagai bagian dari arah majelis secara utuh.",
+                                "Siap bekerja selaras dengan keputusan dan prioritas bersama."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "B",
+                    "title": "Karakter & Spiritualitas",
+                    "focus": "Buah Roh, integritas, dan kedewasaan rohani kandidat.",
+                    "weight": 0.3,
+                    "note_label": "Catatan Bagian B",
+                    "questions": [
+                        {
+                            "id": "B1",
+                            "label": "Kehidupan Rohani Pribadi",
+                            "low_indicator": [
+                                "Jawaban normatif, sulit menunjukkan relasi pribadi dengan Tuhan.",
+                                "Terlihat bergantung pada kemampuan diri sendiri."
+                            ],
+                            "high_indicator": [
+                                "Menunjukkan kebiasaan doa dan pembacaan Firman yang hidup.",
+                                "Memperlihatkan ketergantungan yang nyata kepada Tuhan."
+                            ]
+                        },
+                        {
+                            "id": "B2",
+                            "label": "Kerendahan Hati & Teachability",
+                            "low_indicator": [
+                                "Defensif terhadap koreksi dan sulit diajar.",
+                                "Cenderung merasa paling benar atau paling mampu."
+                            ],
+                            "high_indicator": [
+                                "Mudah menerima masukan dan mau belajar dari orang lain.",
+                                "Menunjukkan kerendahan hati dalam proses bertumbuh."
+                            ]
+                        },
+                        {
+                            "id": "B3",
+                            "label": "Integritas & Akuntabilitas",
+                            "low_indicator": [
+                                "Tidak konsisten antara perkataan dan tindakan.",
+                                "Menghindari pertanggungjawaban atau transparansi."
+                            ],
+                            "high_indicator": [
+                                "Menjaga integritas dalam tugas dan relasi.",
+                                "Terbuka terhadap akuntabilitas dan proses evaluasi."
+                            ]
+                        },
+                        {
+                            "id": "B4",
+                            "label": "Pengelolaan Diri & Keluarga",
+                            "low_indicator": [
+                                "Kesulitan mengatur prioritas pribadi, keluarga, dan pelayanan.",
+                                "Lingkungan terdekat tidak mendukung pelayanan."
+                            ],
+                            "high_indicator": [
+                                "Mampu menata prioritas secara sehat.",
+                                "Ada dukungan dan keseimbangan yang baik antara keluarga dan pelayanan."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "C",
+                    "title": "Kompetensi Pelayanan & Kolaborasi",
+                    "focus": "Kemampuan bekerja, memimpin, dan mengeksekusi tanggung jawab bidang.",
+                    "weight": 0.25,
+                    "note_label": "Catatan Bagian C",
+                    "questions": [
+                        {
+                            "id": "C1",
+                            "label": "Komunikasi & Kerja Tim",
+                            "low_indicator": [
+                                "Kurang mampu mendengar atau menyampaikan ide dengan jelas.",
+                                "Sulit bekerja sama dengan tim dan lintas bidang."
+                            ],
+                            "high_indicator": [
+                                "Komunikatif, mendengar dengan baik, dan mudah berkolaborasi.",
+                                "Mampu menjaga relasi kerja yang sehat."
+                            ]
+                        },
+                        {
+                            "id": "C2",
+                            "label": "Pengambilan Keputusan",
+                            "low_indicator": [
+                                "Bingung menentukan prioritas atau terlalu reaktif.",
+                                "Keputusan tidak memiliki dasar yang jelas."
+                            ],
+                            "high_indicator": [
+                                "Mampu menimbang data, masukan, dan prinsip sebelum memutuskan.",
+                                "Tegas namun tidak gegabah."
+                            ]
+                        },
+                        {
+                            "id": "C3",
+                            "label": "Delegasi & Tindak Lanjut",
+                            "low_indicator": [
+                                "Semua ingin dikerjakan sendiri atau tidak melakukan follow-up.",
+                                "Sulit mempercayai orang lain dalam tim."
+                            ],
+                            "high_indicator": [
+                                "Mampu membagi tugas secara sehat dan memantau pelaksanaannya.",
+                                "Memberdayakan anggota tim sesuai kapasitasnya."
+                            ]
+                        },
+                        {
+                            "id": "C4",
+                            "label": "Ketahanan dalam Konflik",
+                            "low_indicator": [
+                                "Mudah tersulut, menghindari konflik, atau memihak tanpa objektivitas.",
+                                "Tidak memiliki pola penyelesaian masalah yang sehat."
+                            ],
+                            "high_indicator": [
+                                "Stabil secara emosi dan objektif dalam konflik.",
+                                "Mendorong rekonsiliasi dan solusi yang membangun."
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "D",
+                    "title": "Studi Kasus & Eksekusi",
+                    "focus": "Hikmat praktis dan kemampuan mengeksekusi solusi pada situasi nyata.",
+                    "weight": 0.15,
+                    "note_label": "Catatan Bagian D",
+                    "questions": [
+                        {
+                            "id": "D1",
+                            "label": "Penyelesaian Kasus Bidang",
+                            "low_indicator": [
+                                "Jawaban normatif, reaktif, atau tidak operasional.",
+                                "Tidak menunjukkan pemahaman pada risiko dan dampak keputusan."
+                            ],
+                            "high_indicator": [
+                                "Jawaban sistematis, relevan, dan dapat dijalankan.",
+                                "Mampu mempertimbangkan dampak pastoral maupun operasional."
+                            ]
+                        },
+                        {
+                            "id": "D2",
+                            "label": "Prioritas 90 Hari Pertama",
+                            "low_indicator": [
+                                "Tidak jelas menentukan prioritas awal pelayanan.",
+                                "Langkah yang diusulkan tidak realistis atau tidak terukur."
+                            ],
+                            "high_indicator": [
+                                "Mampu menentukan prioritas awal yang jelas dan realistis.",
+                                "Menunjukkan cara eksekusi yang terukur dan bertahap."
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

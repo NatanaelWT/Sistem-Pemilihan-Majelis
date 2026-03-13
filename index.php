@@ -1,0 +1,10029 @@
+<?php
+declare(strict_types=1);
+
+const PRIMARY_DATA_DIR = __DIR__ . '/../../majelis_secure_data';
+const FALLBACK_SESSION_DIR = __DIR__ . '/.session_store';
+
+const LEGACY_BIDANG_FILE = __DIR__ . '/bidang.json';
+const LEGACY_KANDIDAT_FILE = __DIR__ . '/kandidat.json';
+const LEGACY_PEMILIHAN_FILE = __DIR__ . '/pemilihan.json';
+const LEGACY_VOTE_LOG_FILE = __DIR__ . '/vote_log.json';
+const LEGACY_USER_FILE = __DIR__ . '/users.json';
+const LEGACY_FLAGGING_FILE = __DIR__ . '/flagging.json';
+const LEGACY_ASSIGNMENT_FILE = __DIR__ . '/wawancara_assignment.json';
+const LEGACY_KESEDIAAN_FORM_FILE = __DIR__ . '/kesediaan_form.json';
+const LEGACY_SCORECARD_TEMPLATE_FILE = __DIR__ . '/scorecard_templates.json';
+const LEGACY_SCORECARD_SUBMISSION_FILE = __DIR__ . '/scorecard_submissions.json';
+
+const DATA_MAX_BYTES = 3 * 1024 * 1024;
+const IMPORT_MAX_BYTES = 8 * 1024 * 1024;
+const KESEDIAAN_UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+const LOGIN_MAX_ATTEMPTS = 6;
+const LOGIN_MAX_ATTEMPTS_PER_IP = 25;
+const LOGIN_WINDOW_SECONDS = 15 * 60;
+const LOGIN_BLOCK_SECONDS = 15 * 60;
+
+const ELECTION_DEADLINE_END = '2026-03-31 23:59:59';
+const ELECTION_DEADLINE_LABEL = '31 Maret 2026';
+
+function is_https_request(): bool
+{
+    if (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off') {
+        return true;
+    }
+    return ((string)($_SERVER['SERVER_PORT'] ?? '')) === '443';
+}
+
+function ensure_session_directory(string $dir): bool
+{
+    if (!is_dir($dir)) {
+        if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+            return false;
+        }
+    }
+
+    @chmod($dir, 0700);
+    return is_writable($dir);
+}
+
+function protect_session_directory_if_local(string $dir): void
+{
+    if (realpath($dir) !== realpath(FALLBACK_SESSION_DIR)) {
+        return;
+    }
+
+    $htaccessPath = $dir . '/.htaccess';
+    if (!is_file($htaccessPath)) {
+        $content = "# Session files protection\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n";
+        @file_put_contents($htaccessPath, $content, LOCK_EX);
+    }
+
+    $indexPath = $dir . '/index.php';
+    if (!is_file($indexPath)) {
+        $guard = "<?php\nhttp_response_code(403);\nexit('403 - Forbidden');\n";
+        @file_put_contents($indexPath, $guard, LOCK_EX);
+    }
+}
+
+function resolve_session_path(): string
+{
+    static $resolved = null;
+    if (is_string($resolved)) {
+        return $resolved;
+    }
+
+    $candidates = [];
+    $env = getenv('MAJELIS_SESSION_DIR');
+    if (is_string($env)) {
+        $env = trim($env);
+        if ($env !== '') {
+            $candidates[] = $env;
+        }
+    }
+    $candidates[] = PRIMARY_DATA_DIR . '/sessions';
+    $candidates[] = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'majelis_secure_sessions';
+    $candidates[] = FALLBACK_SESSION_DIR;
+
+    foreach ($candidates as $candidate) {
+        if (ensure_session_directory($candidate)) {
+            $resolved = $candidate;
+            protect_session_directory_if_local($resolved);
+            break;
+        }
+    }
+
+    if (!is_string($resolved)) {
+        $resolved = sys_get_temp_dir();
+    }
+
+    return $resolved;
+}
+
+function start_secure_session(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+
+    $cookiePath = '/';
+    if (!empty($_SERVER['SCRIPT_NAME'])) {
+        $base = str_replace('\\', '/', dirname((string)$_SERVER['SCRIPT_NAME']));
+        $base = trim($base, '/');
+        if ($base !== '') {
+            $cookiePath = '/' . $base . '/';
+        }
+    }
+
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.cookie_httponly', '1');
+    ini_set('session.cookie_samesite', 'Strict');
+    if (is_https_request()) {
+        ini_set('session.cookie_secure', '1');
+    }
+
+    session_name('MAJELISSESSID');
+    session_save_path(resolve_session_path());
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => $cookiePath,
+        'domain' => '',
+        'secure' => is_https_request(),
+        'httponly' => true,
+        'samesite' => 'Strict',
+    ]);
+    session_start();
+}
+
+function send_security_headers(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    @ini_set('expose_php', '0');
+    header_remove('X-Powered-By');
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
+    header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+}
+
+function random_hex(int $bytes = 16): string
+{
+    try {
+        return bin2hex(random_bytes($bytes));
+    } catch (Throwable $e) {
+        return sha1(uniqid((string)mt_rand(), true));
+    }
+}
+
+function generate_id(string $prefix): string
+{
+    return $prefix . random_hex(16);
+}
+
+function normalize_role(string $role): string
+{
+    $role = strtolower(trim($role));
+    return match ($role) {
+        'admin' => 'admin',
+        'pewawancara' => 'pewawancara',
+        default => 'user',
+    };
+}
+
+start_secure_session();
+send_security_headers();
+
+function app_base_path(): string
+{
+    $base = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
+    $base = rtrim($base, '/');
+    return $base === '/' ? '' : $base;
+}
+
+function app_index_url(array $params = []): string
+{
+    $url = app_base_path() . '/index.php';
+    if ($params !== []) {
+        $url .= '?' . http_build_query($params);
+    }
+    return $url;
+}
+
+function route_page(): string
+{
+    $page = strtolower(trim((string)($_GET['page'] ?? '')));
+    return $page;
+}
+
+function redirect_to_page(string $page, array $params = []): void
+{
+    $params = array_merge(['page' => $page], $params);
+    header('Location: ' . app_index_url($params));
+    exit;
+}
+
+function is_logged_in(): bool
+{
+    return !empty($_SESSION['logged_in']);
+}
+
+function is_admin_user(): bool
+{
+    $role = strtolower(trim((string)($_SESSION['role'] ?? '')));
+    return $role === 'admin';
+}
+
+function can_access_wawancara_role(string $role): bool
+{
+    $role = normalize_role($role);
+    return $role === 'admin' || $role === 'pewawancara';
+}
+
+function h(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function election_deadline_timestamp(): int
+{
+    $ts = strtotime(ELECTION_DEADLINE_END);
+    return $ts === false ? 0 : $ts;
+}
+
+function is_election_closed(): bool
+{
+    $deadlineTs = election_deadline_timestamp();
+    if ($deadlineTs <= 0) {
+        return false;
+    }
+    return current_time() > $deadlineTs;
+}
+
+function normalize_username(string $username): string
+{
+    $username = trim($username);
+    $username = preg_replace('/\s+/', ' ', $username);
+    return is_string($username) ? $username : '';
+}
+
+function normalize_login_username(string $username): string
+{
+    $username = strtolower(trim($username));
+    $username = preg_replace('/[^a-z0-9]/', '', $username);
+    return is_string($username) ? $username : '';
+}
+
+function normalize_query_choice(string $value, array $allowed, string $default = 'all'): string
+{
+    $value = strtolower(trim($value));
+    $default = strtolower(trim($default));
+    $normalizedAllowed = [];
+    foreach ($allowed as $allowedValue) {
+        $allowedText = strtolower(trim((string)$allowedValue));
+        if ($allowedText !== '') {
+            $normalizedAllowed[$allowedText] = true;
+        }
+    }
+
+    if ($value !== '' && isset($normalizedAllowed[$value])) {
+        return $value;
+    }
+
+    return isset($normalizedAllowed[$default]) ? $default : (array_key_first($normalizedAllowed) ?? 'all');
+}
+
+function short_username_from_fullname(string $fullName): string
+{
+    $fullName = normalize_username($fullName);
+    if ($fullName === '') {
+        return '';
+    }
+
+    $parts = preg_split('/\s+/', $fullName) ?: [];
+    if ($parts === []) {
+        return '';
+    }
+
+    $firstName = normalize_login_username((string)($parts[0] ?? ''));
+    $initials = '';
+    for ($i = 1; $i < count($parts); $i++) {
+        $nextName = normalize_login_username((string)($parts[$i] ?? ''));
+        if ($nextName !== '') {
+            $initials .= substr($nextName, 0, 1);
+        }
+    }
+
+    $base = $firstName . $initials;
+    return substr($base, 0, 32);
+}
+
+function ensure_unique_login_username(string $base, array &$used): string
+{
+    $base = normalize_login_username($base);
+    if ($base === '') {
+        $base = 'user';
+    }
+
+    $candidate = $base;
+    $counter = 1;
+    while (isset($used[$candidate])) {
+        $candidate = $base . $counter;
+        $counter++;
+    }
+    $used[$candidate] = true;
+
+    return $candidate;
+}
+
+function normalize_password(string $password): string
+{
+    return trim($password);
+}
+
+function default_user_data(): array
+{
+    return [
+        [
+            'nama_lengkap' => 'Natanael Wijaya Tiono',
+            'username' => 'natanaelwt',
+            'password' => '010180',
+            'asal_cabang' => 'REC Kutisari',
+            'role' => 'admin',
+        ],
+        [
+            'nama_lengkap' => 'Budi Santoso',
+            'username' => 'budis',
+            'password' => '150190',
+            'asal_cabang' => 'REC Kutisari',
+            'role' => 'user',
+        ],
+        [
+            'nama_lengkap' => 'Sinta Anggraini',
+            'username' => 'sintaa',
+            'password' => '200292',
+            'asal_cabang' => 'REC Nginden',
+            'role' => 'user',
+        ],
+        [
+            'nama_lengkap' => 'David Wijaya',
+            'username' => 'davidw',
+            'password' => '081289',
+            'asal_cabang' => 'REC Darmo',
+            'role' => 'user',
+        ],
+        [
+            'nama_lengkap' => 'Rani Kristina',
+            'username' => 'ranik',
+            'password' => '031195',
+            'asal_cabang' => 'REC Merr',
+            'role' => 'user',
+        ],
+        [
+            'nama_lengkap' => 'Ferry Halim',
+            'username' => 'ferryh',
+            'password' => '270793',
+            'asal_cabang' => 'REC Galaxy Mall',
+            'role' => 'user',
+        ],
+        [
+            'nama_lengkap' => 'Lisa Gunawan',
+            'username' => 'lisag',
+            'password' => '120498',
+            'asal_cabang' => 'REC Batam',
+            'role' => 'user',
+        ],
+    ];
+}
+
+function default_login_rate_data(): array
+{
+    return ['records' => []];
+}
+
+function ensure_directory_writable(string $dir): bool
+{
+    if (is_dir($dir)) {
+        return is_writable($dir);
+    }
+
+    if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        return false;
+    }
+
+    @chmod($dir, 0700);
+    return is_writable($dir);
+}
+
+function append_security_block_to_htaccess(string $path, string $blockId, string $blockContent): void
+{
+    $begin = '# BEGIN ' . $blockId;
+    $end = '# END ' . $blockId;
+    $fullBlock = $begin . PHP_EOL . trim($blockContent) . PHP_EOL . $end . PHP_EOL;
+
+    $existing = '';
+    if (is_file($path)) {
+        $raw = @file_get_contents($path);
+        if (is_string($raw)) {
+            $existing = $raw;
+        }
+    }
+
+    if (strpos($existing, $begin) !== false && strpos($existing, $end) !== false) {
+        $pattern = '/' . preg_quote($begin, '/') . '.*?' . preg_quote($end, '/') . '\s*/s';
+        $replaced = preg_replace($pattern, $fullBlock, $existing, 1);
+        if (is_string($replaced) && $replaced !== $existing) {
+            @file_put_contents($path, $replaced, LOCK_EX);
+        }
+        return;
+    }
+
+    $prefix = $existing !== '' && substr($existing, -1) !== "\n" ? PHP_EOL : '';
+    @file_put_contents($path, $existing . $prefix . $fullBlock, LOCK_EX);
+}
+
+function ensure_webroot_json_protection(): void
+{
+    $htaccessPath = __DIR__ . '/.htaccess';
+    $block = <<<'HTACCESS'
+Options -Indexes
+<FilesMatch "\.json$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Deny from all
+    </IfModule>
+</FilesMatch>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^\.session_store(/|$) - [F,L]
+    RewriteRule (^|/)sess_[A-Za-z0-9]+$ - [F,L]
+</IfModule>
+HTACCESS;
+    append_security_block_to_htaccess($htaccessPath, 'MAJELIS_SECURITY', $block);
+}
+
+function legacy_file_for(string $filename): string
+{
+    return match ($filename) {
+        'users.json' => LEGACY_USER_FILE,
+        'bidang.json' => LEGACY_BIDANG_FILE,
+        'kandidat.json' => LEGACY_KANDIDAT_FILE,
+        'pemilihan.json' => LEGACY_PEMILIHAN_FILE,
+        'vote_log.json' => LEGACY_VOTE_LOG_FILE,
+        'flagging.json' => LEGACY_FLAGGING_FILE,
+        'wawancara_assignment.json' => LEGACY_ASSIGNMENT_FILE,
+        'kesediaan_form.json' => LEGACY_KESEDIAAN_FORM_FILE,
+        'scorecard_templates.json' => LEGACY_SCORECARD_TEMPLATE_FILE,
+        'scorecard_submissions.json' => LEGACY_SCORECARD_SUBMISSION_FILE,
+        default => '',
+    };
+}
+
+function migration_sources_for(string $filename): array
+{
+    $sources = [];
+    $legacy = legacy_file_for($filename);
+    if ($legacy !== '') {
+        $sources[] = $legacy;
+    }
+
+    return $sources;
+}
+
+function default_payload_for_file(string $filename): array
+{
+    return match ($filename) {
+        'users.json' => ['users' => default_user_data()],
+        'bidang.json' => ['bidang' => default_bidang_data()],
+        'kandidat.json' => ['kandidat' => default_kandidat_data()],
+        'pemilihan.json' => ['pemilihan' => []],
+        'vote_log.json' => ['logs' => []],
+        'flagging.json' => ['flags' => []],
+        'wawancara_assignment.json' => ['assignments' => []],
+        'kesediaan_form.json' => ['forms' => []],
+        'scorecard_templates.json' => default_scorecard_templates_data(),
+        'scorecard_submissions.json' => ['submissions' => []],
+        'login_rate.json' => default_login_rate_data(),
+        default => [],
+    };
+}
+
+function read_json_file(string $path, array $fallback): array
+{
+    if (!is_file($path)) {
+        return $fallback;
+    }
+
+    $size = @filesize($path);
+    if (is_int($size) && $size > DATA_MAX_BYTES) {
+        return $fallback;
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw)) {
+        return $fallback;
+    }
+
+    // Tolerate UTF-8 BOM produced by some editors/tools.
+    if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
+        $raw = substr($raw, 3);
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : $fallback;
+}
+
+function write_json_file_atomic(string $path, array $payload): bool
+{
+    $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if (!is_string($encoded)) {
+        return false;
+    }
+
+    $tmpPath = $path . '.tmp.' . random_hex(6);
+    if (@file_put_contents($tmpPath, $encoded . PHP_EOL, LOCK_EX) === false) {
+        return false;
+    }
+
+    @chmod($tmpPath, 0600);
+    if (!@rename($tmpPath, $path)) {
+        @unlink($path);
+        if (!@rename($tmpPath, $path)) {
+            @unlink($tmpPath);
+            return false;
+        }
+    }
+
+    @chmod($path, 0600);
+    return true;
+}
+
+function is_password_hash_value(string $value): bool
+{
+    return preg_match('/^\$(2y|2a|argon2id|argon2i)\$/', $value) === 1;
+}
+
+function upgrade_user_password_hashes(): void
+{
+    $file = user_file_path();
+    $data = read_json_file($file, ['users' => default_user_data()]);
+    if (!isset($data['users']) || !is_array($data['users'])) {
+        return;
+    }
+
+    $changed = false;
+    foreach ($data['users'] as $idx => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $password = normalize_password((string)($item['password'] ?? ''));
+        if ($password === '' || is_password_hash_value($password)) {
+            continue;
+        }
+
+        $hashed = password_hash($password, PASSWORD_DEFAULT);
+        if (!is_string($hashed) || $hashed === '') {
+            continue;
+        }
+
+        $data['users'][$idx]['password'] = $hashed;
+        $changed = true;
+    }
+
+    if ($changed) {
+        write_json_file_atomic($file, $data);
+    }
+}
+
+function bootstrap_data_storage(string $dir): void
+{
+    static $bootstrapped = [];
+    if (isset($bootstrapped[$dir])) {
+        return;
+    }
+
+    ensure_webroot_json_protection();
+    $requiredFiles = [
+        'users.json',
+        'bidang.json',
+        'kandidat.json',
+        'pemilihan.json',
+        'vote_log.json',
+        'flagging.json',
+        'wawancara_assignment.json',
+        'kesediaan_form.json',
+        'scorecard_templates.json',
+        'scorecard_submissions.json',
+        'login_rate.json',
+    ];
+
+    foreach ($requiredFiles as $filename) {
+        $target = $dir . '/' . $filename;
+        if (is_file($target)) {
+            @chmod($target, 0600);
+            continue;
+        }
+
+        $sourceFile = '';
+        $sourceData = [];
+        $migrated = false;
+        foreach (migration_sources_for($filename) as $candidateSource) {
+            if (!is_string($candidateSource) || $candidateSource === '') {
+                continue;
+            }
+            if (!is_file($candidateSource)) {
+                continue;
+            }
+
+            $decodedSource = read_json_file($candidateSource, []);
+            if ($decodedSource !== []) {
+                $sourceFile = $candidateSource;
+                $sourceData = $decodedSource;
+                $migrated = true;
+                break;
+            }
+        }
+
+        $payload = $migrated ? $sourceData : default_payload_for_file($filename);
+        if (write_json_file_atomic($target, $payload) && $migrated) {
+            $legacyFile = legacy_file_for($filename);
+            if ($legacyFile !== '' && $sourceFile === $legacyFile && is_file($legacyFile)) {
+                @unlink($legacyFile);
+            }
+        }
+    }
+
+    $bootstrapped[$dir] = true;
+}
+
+function secure_data_dir(): string
+{
+    static $resolved = null;
+    if (is_string($resolved)) {
+        return $resolved;
+    }
+
+    $resolved = PRIMARY_DATA_DIR;
+    if (!ensure_directory_writable($resolved)) {
+        http_response_code(500);
+        exit('500 - Folder penyimpanan utama tidak tersedia: ' . PRIMARY_DATA_DIR);
+    }
+
+    bootstrap_data_storage($resolved);
+    return $resolved;
+}
+
+function user_file_path(): string
+{
+    return secure_data_dir() . '/users.json';
+}
+
+function bidang_file_path(): string
+{
+    return secure_data_dir() . '/bidang.json';
+}
+
+function kandidat_file_path(): string
+{
+    return secure_data_dir() . '/kandidat.json';
+}
+
+function pemilihan_file_path(): string
+{
+    return secure_data_dir() . '/pemilihan.json';
+}
+
+function vote_log_file_path(): string
+{
+    return secure_data_dir() . '/vote_log.json';
+}
+
+function login_rate_file_path(): string
+{
+    return secure_data_dir() . '/login_rate.json';
+}
+
+function flagging_file_path(): string
+{
+    return secure_data_dir() . '/flagging.json';
+}
+
+function wawancara_assignment_file_path(): string
+{
+    return secure_data_dir() . '/wawancara_assignment.json';
+}
+
+function kesediaan_form_file_path(): string
+{
+    return secure_data_dir() . '/kesediaan_form.json';
+}
+
+function scorecard_template_file_path(): string
+{
+    return secure_data_dir() . '/scorecard_templates.json';
+}
+
+function scorecard_submission_file_path(): string
+{
+    return secure_data_dir() . '/scorecard_submissions.json';
+}
+
+function load_user_data(): array
+{
+    $fallback = default_user_data();
+    upgrade_user_password_hashes();
+    $decoded = read_json_file(user_file_path(), ['users' => $fallback]);
+    if (!is_array($decoded) || !isset($decoded['users']) || !is_array($decoded['users'])) {
+        return $fallback;
+    }
+
+    $result = [];
+    foreach ($decoded['users'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $rawNamaLengkap = normalize_username((string)($item['nama_lengkap'] ?? ''));
+        $rawUsername = normalize_username((string)($item['username'] ?? ''));
+        if ($rawNamaLengkap === '') {
+            $rawNamaLengkap = $rawUsername;
+        }
+
+        $loginUsername = '';
+        if ($rawUsername !== '' && strpos($rawUsername, ' ') === false) {
+            $loginUsername = normalize_login_username($rawUsername);
+        }
+        if ($loginUsername === '') {
+            $loginUsername = short_username_from_fullname($rawNamaLengkap);
+        }
+        $loginUsername = normalize_login_username($loginUsername);
+
+        $password = normalize_password((string)($item['password'] ?? ''));
+        $asalCabang = trim((string)($item['asal_cabang'] ?? ''));
+        $role = normalize_role((string)($item['role'] ?? 'user'));
+
+        if ($rawNamaLengkap === '' || $loginUsername === '' || $password === '' || $asalCabang === '') {
+            continue;
+        }
+
+        $result[] = [
+            'nama_lengkap' => $rawNamaLengkap,
+            'username' => $loginUsername,
+            'password' => $password,
+            'asal_cabang' => $asalCabang,
+            'role' => $role,
+        ];
+    }
+
+    return $result !== [] ? $result : $fallback;
+}
+
+function verify_user_password(string $inputPassword, string $storedPassword): bool
+{
+    if ($storedPassword === '') {
+        return false;
+    }
+
+    if (is_password_hash_value($storedPassword)) {
+        return password_verify($inputPassword, $storedPassword);
+    }
+
+    return hash_equals($storedPassword, $inputPassword);
+}
+
+function find_user_for_login(array $users, string $username, string $password): ?array
+{
+    $username = normalize_login_username($username);
+    foreach ($users as $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+
+        $storedUsername = normalize_login_username((string)($user['username'] ?? ''));
+        $storedPassword = normalize_password((string)($user['password'] ?? ''));
+        if (hash_equals($storedUsername, $username) && verify_user_password($password, $storedPassword)) {
+            return $user;
+        }
+    }
+
+    return null;
+}
+
+function get_user_cabang_list(array $users): array
+{
+    $set = [];
+    foreach ($users as $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+
+        $cabang = trim((string)($user['asal_cabang'] ?? ''));
+        if ($cabang !== '') {
+            $set[$cabang] = true;
+        }
+    }
+
+    $list = array_keys($set);
+    sort($list, SORT_NATURAL | SORT_FLAG_CASE);
+    return $list;
+}
+
+function default_bidang_description(string $title): string
+{
+    return 'Template deskripsi sementara untuk ' . $title . '. Silakan ubah isi deskripsi sesuai kebutuhan.';
+}
+
+function is_ketua_pengurus_lokal_bidang(string $title): bool
+{
+    $normalized = strtolower(trim($title));
+    $normalized = preg_replace('/\s+/', ' ', $normalized);
+    if (!is_string($normalized) || $normalized === '') {
+        return false;
+    }
+
+    return strpos($normalized, 'ketua pengurus lokal') === 0;
+}
+
+function extract_ketua_pengurus_lokal_cabang(string $title): string
+{
+    if (!is_ketua_pengurus_lokal_bidang($title)) {
+        return '';
+    }
+
+    $rest = preg_replace('/^ketua\s+pengurus\s+lokal/i', '', trim($title));
+    $rest = is_string($rest) ? trim($rest) : '';
+    if ($rest === '') {
+        return '';
+    }
+
+    if (preg_match('/^\[(.+)\]$/', $rest, $matches) === 1) {
+        return trim((string)($matches[1] ?? ''));
+    }
+    if (preg_match('/^-\s*(.+)$/', $rest, $matches) === 1) {
+        return trim((string)($matches[1] ?? ''));
+    }
+    if (preg_match('/^\((.+)\)$/', $rest, $matches) === 1) {
+        return trim((string)($matches[1] ?? ''));
+    }
+
+    $rest = ltrim($rest, "- \t");
+    return trim($rest);
+}
+
+function bidang_title_parts(string $title): array
+{
+    $title = trim($title);
+    if ($title === '') {
+        return [
+            'main' => '',
+            'cabang' => '',
+        ];
+    }
+
+    if (!is_ketua_pengurus_lokal_bidang($title)) {
+        return [
+            'main' => $title,
+            'cabang' => '',
+        ];
+    }
+
+    return [
+        'main' => 'Ketua Pengurus Lokal',
+        'cabang' => extract_ketua_pengurus_lokal_cabang($title),
+    ];
+}
+
+function bidang_title_for_cabang(string $title, string $asalCabang): string
+{
+    $title = trim($title);
+    if ($title === '') {
+        return '';
+    }
+    if (!is_ketua_pengurus_lokal_bidang($title)) {
+        return $title;
+    }
+
+    $asalCabang = trim($asalCabang);
+    if ($asalCabang === '' || $asalCabang === '-') {
+        $asalCabang = extract_ketua_pengurus_lokal_cabang($title);
+    }
+    if ($asalCabang === '' || $asalCabang === '-') {
+        return 'Ketua Pengurus Lokal';
+    }
+
+    return 'Ketua Pengurus Lokal - ' . $asalCabang;
+}
+
+function normalize_vote_bidang_title(string $bidang, string $asalCabangUser): string
+{
+    return bidang_title_for_cabang($bidang, $asalCabangUser);
+}
+
+function personalize_bidang_list_for_cabang(array $bidangList, string $asalCabang): array
+{
+    $result = [];
+    foreach ($bidangList as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $title = bidang_title_for_cabang((string)($item['title'] ?? ''), $asalCabang);
+        if ($title === '') {
+            continue;
+        }
+
+        $item['title'] = $title;
+        $result[] = $item;
+    }
+
+    return $result;
+}
+
+function default_bidang_data(): array
+{
+    $titles = [
+        'Ketua Majelis',
+        'Sekretaris Majelis',
+        'Bendahara Majelis',
+        'Majelis Bidang Pemuridan',
+        'Majelis Bidang Misi',
+        'Majelis Bidang Diakonia',
+        'Majelis Bidang Ibadah',
+        'Ketua Pengurus Lokal',
+    ];
+
+    $result = [];
+    foreach ($titles as $title) {
+        $result[] = [
+            'title' => $title,
+            'description' => default_bidang_description($title),
+        ];
+    }
+
+    return $result;
+}
+
+function load_bidang_data(): array
+{
+    $fallback = default_bidang_data();
+    $decoded = read_json_file(bidang_file_path(), ['bidang' => $fallback]);
+    if (!is_array($decoded) || !isset($decoded['bidang']) || !is_array($decoded['bidang'])) {
+        return $fallback;
+    }
+
+    $result = [];
+    foreach ($decoded['bidang'] as $item) {
+        if (is_string($item)) {
+            $title = trim($item);
+            if ($title === '') {
+                continue;
+            }
+
+            $result[] = [
+                'title' => $title,
+                'description' => default_bidang_description($title),
+            ];
+            continue;
+        }
+
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $title = trim((string)($item['title'] ?? ''));
+        if ($title === '') {
+            continue;
+        }
+
+        $description = trim((string)($item['description'] ?? ''));
+        if ($description === '') {
+            $description = default_bidang_description($title);
+        }
+
+        $result[] = [
+            'title' => $title,
+            'description' => $description,
+        ];
+    }
+
+    return $result !== [] ? $result : $fallback;
+}
+
+function default_scorecard_final_ranges(): array
+{
+    return [
+        ['min' => 1.00, 'max' => 1.80, 'label' => 'Sangat Tidak Direkomendasikan'],
+        ['min' => 1.81, 'max' => 2.60, 'label' => 'Tidak Direkomendasikan'],
+        ['min' => 2.61, 'max' => 3.40, 'label' => 'Dipertimbangkan Kembali'],
+        ['min' => 3.41, 'max' => 4.20, 'label' => 'Direkomendasikan'],
+        ['min' => 4.21, 'max' => 5.00, 'label' => 'Sangat Direkomendasikan'],
+    ];
+}
+
+function default_scorecard_decision_options(): array
+{
+    return [
+        'Sangat Direkomendasikan',
+        'Direkomendasikan dengan Catatan',
+        'Dipertimbangkan Kembali (Hold)',
+        'Tidak Direkomendasikan',
+    ];
+}
+
+function default_scorecard_ketua_majelis_sections(): array
+{
+    return [
+        [
+            'id' => 'A',
+            'title' => 'Kesesuaian Teologis & Visi',
+            'focus' => 'Apakah teologi kandidat hidup dan berdampak pada cara pandangnya terhadap pelayanan?',
+            'weight' => 0.30,
+            'note_label' => 'Catatan Bagian A',
+            'questions' => [
+                [
+                    'id' => 'A1',
+                    'label' => 'Definisi Gospel-Centered',
+                    'low_indicator' => [
+                        'Jawaban bersifat moralis atau legalis.',
+                        'Melihat Injil hanya sebagai pintu masuk keselamatan, bukan pola hidup.',
+                    ],
+                    'high_indicator' => [
+                        'Memahami Injil sebagai kuasa yang mengubahkan, bukan sekadar aturan.',
+                        'Kasih karunia Allah menjadi motivasi pelayanan, bukan rasa bersalah atau kewajiban semata.',
+                    ],
+                ],
+                [
+                    'id' => 'A2',
+                    'label' => 'Kedaulatan Allah vs Tanggung Jawab',
+                    'low_indicator' => [
+                        'Terlalu pasif atau fatalis dengan alasan menunggu Tuhan.',
+                        'Terlalu mengandalkan strategi manusia tanpa doa dan ketergantungan pada Tuhan.',
+                    ],
+                    'high_indicator' => [
+                        'Seimbang antara perencanaan yang matang dan penyerahan pada providensia Allah.',
+                        'Melihat strategi sebagai wujud tanggung jawab di hadapan Tuhan.',
+                    ],
+                ],
+                [
+                    'id' => 'A3',
+                    'label' => 'Identitas Reformed',
+                    'low_indicator' => [
+                        'Hanya menguasai istilah akademis namun kaku atau sombong dalam aplikasinya.',
+                        'Doktrin tidak terlihat membentuk penggembalaan dan kerendahan hati.',
+                    ],
+                    'high_indicator' => [
+                        'Memegang teguh doktrin Reformed dengan hati yang hangat dan rendah hati.',
+                        'Mampu mengaplikasikan doktrin dalam penggembalaan yang nyata.',
+                    ],
+                ],
+                [
+                    'id' => 'A4',
+                    'label' => 'Respon Isu Kontemporer',
+                    'low_indicator' => [
+                        'Jawaban pragmatis ikut arus zaman atau sangat menghakimi tanpa kasih.',
+                        'Tidak memiliki landasan Alkitab yang kuat.',
+                    ],
+                    'high_indicator' => [
+                        'Berpegang pada otoritas Alkitab namun menyampaikannya dengan hikmat dan kasih.',
+                        'Mampu speaking truth in love tanpa mengorbankan prinsip.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'B',
+            'title' => 'Karakter & Spiritualitas',
+            'focus' => 'Kualifikasi 1 Timotius 3 dan Titus 1. Apakah ada buah Roh yang nyata?',
+            'weight' => 0.30,
+            'note_label' => 'Catatan Bagian B',
+            'questions' => [
+                [
+                    'id' => 'B1',
+                    'label' => 'Kehidupan Doa Pribadi',
+                    'low_indicator' => [
+                        'Jawaban klise atau umum dan terlihat mengandalkan kekuatan sendiri.',
+                        'Tidak dapat menceritakan pengalaman rohani pribadi yang aktual.',
+                    ],
+                    'high_indicator' => [
+                        'Jujur, rutin, dan menjadikan doa sebagai napas pelayanan.',
+                        'Terlihat memiliki relasi yang hidup dengan Tuhan.',
+                    ],
+                ],
+                [
+                    'id' => 'B2',
+                    'label' => 'Kegagalan & Pertobatan',
+                    'low_indicator' => [
+                        'Defensif, menyalahkan orang lain, atau mengaku tidak pernah gagal.',
+                        'Tidak terlihat adanya pertobatan yang hancur hati.',
+                    ],
+                    'high_indicator' => [
+                        'Terbuka mengakui kelemahan dan tidak menyembunyikan dosa.',
+                        'Menunjukkan bagaimana Injil memulihkan dan menguatkan untuk bangkit.',
+                    ],
+                ],
+                [
+                    'id' => 'B3',
+                    'label' => 'Manajemen Keluarga',
+                    'low_indicator' => [
+                        'Menganggap pelayanan gereja lebih suci daripada keluarga.',
+                        'Istri atau anak terlihat sebagai beban pelayanan.',
+                    ],
+                    'high_indicator' => [
+                        'Menempatkan keluarga sebagai pelayanan utama.',
+                        'Ada keseimbangan sehat dan dukungan penuh dari keluarga.',
+                    ],
+                ],
+                [
+                    'id' => 'B4',
+                    'label' => 'Ketahanan Terhadap Kritik',
+                    'low_indicator' => [
+                        'Menjadi pahit, defensif, atau merasa diserang secara personal.',
+                        'Tidak stabil saat menerima kritik dari sesama majelis.',
+                    ],
+                    'high_indicator' => [
+                        'Merespons kritik dengan hikmat dan penguasaan diri.',
+                        'Tetap stabil secara rohani di tengah perbedaan pendapat.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'C',
+            'title' => 'Kepemimpinan & Tata Kelola',
+            'focus' => 'Kompetensi sebagai yang utama di antara yang sederajat.',
+            'weight' => 0.25,
+            'note_label' => 'Catatan Bagian C',
+            'questions' => [
+                [
+                    'id' => 'C1',
+                    'label' => 'Gaya Kepemimpinan',
+                    'low_indicator' => [
+                        'Otoriter, dominan, atau sebaliknya pasif dan takut mengambil keputusan.',
+                        'Cenderung menjadi people pleaser atau one man show.',
+                    ],
+                    'high_indicator' => [
+                        'Fasilitator yang baik dan mampu membangun konsensus.',
+                        'Tegas namun lembut dalam memimpin.',
+                    ],
+                ],
+                [
+                    'id' => 'C2',
+                    'label' => 'Pengambilan Keputusan',
+                    'low_indicator' => [
+                        'Memaksakan pendapat atau terlalu bimbang sehingga tidak ada keputusan.',
+                        'Tidak menghargai proses kolektif-kolegial.',
+                    ],
+                    'high_indicator' => [
+                        'Memandu proses keputusan secara kolektif-kolegial.',
+                        'Berani mengambil keputusan sulit setelah mendengar masukan.',
+                    ],
+                ],
+                [
+                    'id' => 'C3',
+                    'label' => 'Resolusi Konflik',
+                    'low_indicator' => [
+                        'Menghindari konflik atau memihak tanpa objektivitas.',
+                        'Emosional dan tidak mencari akar masalah.',
+                    ],
+                    'high_indicator' => [
+                        'Mengedepankan rekonsiliasi dan objektivitas.',
+                        'Mengutamakan keutuhan tubuh Kristus dan kebenaran.',
+                    ],
+                ],
+                [
+                    'id' => 'C4',
+                    'label' => 'Delegasi & Kaderisasi',
+                    'low_indicator' => [
+                        'One-man show dan sulit mempercayai orang lain.',
+                        'Tidak memikirkan penerus atau pemimpin muda.',
+                    ],
+                    'high_indicator' => [
+                        'Mampu mempercayakan tugas sesuai karunia rekan lain.',
+                        'Aktif memberdayakan dan membimbing pemimpin muda.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'D',
+            'title' => 'Studi Kasus / Penyelesaian Masalah',
+            'focus' => 'Hikmat praktis dalam situasi nyata.',
+            'weight' => 0.15,
+            'note_label' => 'Catatan Bagian D',
+            'questions' => [
+                [
+                    'id' => 'D1',
+                    'label' => 'Disiplin Gereja',
+                    'low_indicator' => [
+                        'Terlalu kejam tanpa pendampingan atau terlalu permisif demi alasan kasih.',
+                        'Tidak menyeimbangkan kekudusan dan pemulihan.',
+                    ],
+                    'high_indicator' => [
+                        'Seimbang antara kekudusan Allah dan kasih pengampunan.',
+                        'Prosedural sesuai tata gereja namun tetap pastoral dan memulihkan.',
+                    ],
+                ],
+                [
+                    'id' => 'D2',
+                    'label' => 'Visi vs Tradisi',
+                    'low_indicator' => [
+                        'Memaksakan perubahan tanpa peduli jemaat lama atau menyerah total pada tradisi yang kaku.',
+                        'Tidak komunikatif dalam proses perubahan.',
+                    ],
+                    'high_indicator' => [
+                        'Mencari jalan tengah tanpa mengorbankan prinsip.',
+                        'Sabar dalam perubahan dan komunikatif terhadap seluruh pihak.',
+                    ],
+                ],
+            ],
+        ],
+    ];
+}
+
+function default_scorecard_generic_sections(): array
+{
+    return [
+        [
+            'id' => 'A',
+            'title' => 'Panggilan & Visi Pelayanan',
+            'focus' => 'Seberapa jelas kandidat memahami panggilan dan arah pelayanan pada bidang ini.',
+            'weight' => 0.30,
+            'note_label' => 'Catatan Bagian A',
+            'questions' => [
+                [
+                    'id' => 'A1',
+                    'label' => 'Pemahaman Peran Bidang',
+                    'low_indicator' => [
+                        'Tidak memahami tanggung jawab inti bidang yang dilamar.',
+                        'Jawaban terlalu umum dan tidak menyentuh kebutuhan pelayanan nyata.',
+                    ],
+                    'high_indicator' => [
+                        'Memahami mandat, prioritas, dan tantangan inti bidang secara jelas.',
+                        'Mampu menjelaskan kontribusi spesifik yang relevan dengan bidang.',
+                    ],
+                ],
+                [
+                    'id' => 'A2',
+                    'label' => 'Visi Pelayanan',
+                    'low_indicator' => [
+                        'Tidak memiliki arah pelayanan yang jelas.',
+                        'Visi hanya berupa slogan tanpa langkah yang realistis.',
+                    ],
+                    'high_indicator' => [
+                        'Memiliki visi yang jelas, realistis, dan terukur.',
+                        'Visi selaras dengan kebutuhan jemaat dan arah gereja.',
+                    ],
+                ],
+                [
+                    'id' => 'A3',
+                    'label' => 'Landasan Alkitabiah',
+                    'low_indicator' => [
+                        'Jawaban pragmatis tanpa dasar Alkitab yang kuat.',
+                        'Sulit menjelaskan alasan rohani di balik arah pelayanannya.',
+                    ],
+                    'high_indicator' => [
+                        'Menunjukkan pemikiran yang berakar pada Firman Tuhan.',
+                        'Mampu menghubungkan prinsip Alkitab dengan praktik pelayanan.',
+                    ],
+                ],
+                [
+                    'id' => 'A4',
+                    'label' => 'Keselarasan dengan Tim Majelis',
+                    'low_indicator' => [
+                        'Berpikir sangat individual dan kurang terbuka pada arah bersama.',
+                        'Sulit melihat bidangnya sebagai bagian dari tubuh yang lebih besar.',
+                    ],
+                    'high_indicator' => [
+                        'Melihat bidangnya sebagai bagian dari arah majelis secara utuh.',
+                        'Siap bekerja selaras dengan keputusan dan prioritas bersama.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'B',
+            'title' => 'Karakter & Spiritualitas',
+            'focus' => 'Buah Roh, integritas, dan kedewasaan rohani kandidat.',
+            'weight' => 0.30,
+            'note_label' => 'Catatan Bagian B',
+            'questions' => [
+                [
+                    'id' => 'B1',
+                    'label' => 'Kehidupan Rohani Pribadi',
+                    'low_indicator' => [
+                        'Jawaban normatif, sulit menunjukkan relasi pribadi dengan Tuhan.',
+                        'Terlihat bergantung pada kemampuan diri sendiri.',
+                    ],
+                    'high_indicator' => [
+                        'Menunjukkan kebiasaan doa dan pembacaan Firman yang hidup.',
+                        'Memperlihatkan ketergantungan yang nyata kepada Tuhan.',
+                    ],
+                ],
+                [
+                    'id' => 'B2',
+                    'label' => 'Kerendahan Hati & Teachability',
+                    'low_indicator' => [
+                        'Defensif terhadap koreksi dan sulit diajar.',
+                        'Cenderung merasa paling benar atau paling mampu.',
+                    ],
+                    'high_indicator' => [
+                        'Mudah menerima masukan dan mau belajar dari orang lain.',
+                        'Menunjukkan kerendahan hati dalam proses bertumbuh.',
+                    ],
+                ],
+                [
+                    'id' => 'B3',
+                    'label' => 'Integritas & Akuntabilitas',
+                    'low_indicator' => [
+                        'Tidak konsisten antara perkataan dan tindakan.',
+                        'Menghindari pertanggungjawaban atau transparansi.',
+                    ],
+                    'high_indicator' => [
+                        'Menjaga integritas dalam tugas dan relasi.',
+                        'Terbuka terhadap akuntabilitas dan proses evaluasi.',
+                    ],
+                ],
+                [
+                    'id' => 'B4',
+                    'label' => 'Pengelolaan Diri & Keluarga',
+                    'low_indicator' => [
+                        'Kesulitan mengatur prioritas pribadi, keluarga, dan pelayanan.',
+                        'Lingkungan terdekat tidak mendukung pelayanan.',
+                    ],
+                    'high_indicator' => [
+                        'Mampu menata prioritas secara sehat.',
+                        'Ada dukungan dan keseimbangan yang baik antara keluarga dan pelayanan.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'C',
+            'title' => 'Kompetensi Pelayanan & Kolaborasi',
+            'focus' => 'Kemampuan bekerja, memimpin, dan mengeksekusi tanggung jawab bidang.',
+            'weight' => 0.25,
+            'note_label' => 'Catatan Bagian C',
+            'questions' => [
+                [
+                    'id' => 'C1',
+                    'label' => 'Komunikasi & Kerja Tim',
+                    'low_indicator' => [
+                        'Kurang mampu mendengar atau menyampaikan ide dengan jelas.',
+                        'Sulit bekerja sama dengan tim dan lintas bidang.',
+                    ],
+                    'high_indicator' => [
+                        'Komunikatif, mendengar dengan baik, dan mudah berkolaborasi.',
+                        'Mampu menjaga relasi kerja yang sehat.',
+                    ],
+                ],
+                [
+                    'id' => 'C2',
+                    'label' => 'Pengambilan Keputusan',
+                    'low_indicator' => [
+                        'Bingung menentukan prioritas atau terlalu reaktif.',
+                        'Keputusan tidak memiliki dasar yang jelas.',
+                    ],
+                    'high_indicator' => [
+                        'Mampu menimbang data, masukan, dan prinsip sebelum memutuskan.',
+                        'Tegas namun tidak gegabah.',
+                    ],
+                ],
+                [
+                    'id' => 'C3',
+                    'label' => 'Delegasi & Tindak Lanjut',
+                    'low_indicator' => [
+                        'Semua ingin dikerjakan sendiri atau tidak melakukan follow-up.',
+                        'Sulit mempercayai orang lain dalam tim.',
+                    ],
+                    'high_indicator' => [
+                        'Mampu membagi tugas secara sehat dan memantau pelaksanaannya.',
+                        'Memberdayakan anggota tim sesuai kapasitasnya.',
+                    ],
+                ],
+                [
+                    'id' => 'C4',
+                    'label' => 'Ketahanan dalam Konflik',
+                    'low_indicator' => [
+                        'Mudah tersulut, menghindari konflik, atau memihak tanpa objektivitas.',
+                        'Tidak memiliki pola penyelesaian masalah yang sehat.',
+                    ],
+                    'high_indicator' => [
+                        'Stabil secara emosi dan objektif dalam konflik.',
+                        'Mendorong rekonsiliasi dan solusi yang membangun.',
+                    ],
+                ],
+            ],
+        ],
+        [
+            'id' => 'D',
+            'title' => 'Studi Kasus & Eksekusi',
+            'focus' => 'Hikmat praktis dan kemampuan mengeksekusi solusi pada situasi nyata.',
+            'weight' => 0.15,
+            'note_label' => 'Catatan Bagian D',
+            'questions' => [
+                [
+                    'id' => 'D1',
+                    'label' => 'Penyelesaian Kasus Bidang',
+                    'low_indicator' => [
+                        'Jawaban normatif, reaktif, atau tidak operasional.',
+                        'Tidak menunjukkan pemahaman pada risiko dan dampak keputusan.',
+                    ],
+                    'high_indicator' => [
+                        'Jawaban sistematis, relevan, dan dapat dijalankan.',
+                        'Mampu mempertimbangkan dampak pastoral maupun operasional.',
+                    ],
+                ],
+                [
+                    'id' => 'D2',
+                    'label' => 'Prioritas 90 Hari Pertama',
+                    'low_indicator' => [
+                        'Tidak jelas menentukan prioritas awal pelayanan.',
+                        'Langkah yang diusulkan tidak realistis atau tidak terukur.',
+                    ],
+                    'high_indicator' => [
+                        'Mampu menentukan prioritas awal yang jelas dan realistis.',
+                        'Menunjukkan cara eksekusi yang terukur dan bertahap.',
+                    ],
+                ],
+            ],
+        ],
+    ];
+}
+
+function default_scorecard_templates_data(): array
+{
+    return [
+        'default_template_key' => 'generic_majelis_v1',
+        'templates' => [
+            [
+                'template_key' => 'ketua_majelis_v1',
+                'title' => 'Scorecard Wawancara Ketua Majelis',
+                'version' => 1,
+                'bidang_titles' => ['Ketua Majelis'],
+                'decision_options' => default_scorecard_decision_options(),
+                'final_ranges' => default_scorecard_final_ranges(),
+                'sections' => default_scorecard_ketua_majelis_sections(),
+            ],
+            [
+                'template_key' => 'generic_majelis_v1',
+                'title' => 'Scorecard Wawancara Majelis',
+                'version' => 1,
+                'bidang_titles' => [
+                    'Sekretaris Majelis',
+                    'Bendahara Majelis',
+                    'Majelis Bidang Pemuridan',
+                    'Majelis Bidang Misi',
+                    'Majelis Bidang Diakonia',
+                    'Majelis Bidang Ibadah',
+                    'Ketua Pengurus Lokal',
+                ],
+                'decision_options' => default_scorecard_decision_options(),
+                'final_ranges' => default_scorecard_final_ranges(),
+                'sections' => default_scorecard_generic_sections(),
+            ],
+        ],
+    ];
+}
+
+function default_kandidat_data(): array
+{
+    $cabangList = [
+        'REC Kutisari',
+        'REC Nginden',
+        'REC Darmo',
+        'REC Merr',
+        'REC Galaxy Mall',
+        'REC Batam',
+    ];
+
+    $firstNames = [
+        'Yohanes', 'Maria', 'Daniel', 'Debora', 'Samuel',
+        'Lidia', 'Andre', 'Michelle', 'Ricky', 'Cynthia',
+        'Kevin', 'Stefani', 'Jonathan', 'Grace', 'Ester',
+        'Albert', 'Felicia', 'Nathaniel', 'Caroline', 'Timothy',
+    ];
+    $middleNames = [
+        'Aditya', 'Gabriella', 'Kristianto', 'Natalia', 'Jonathan',
+        'Evelyn', 'Saputra', 'Olivia', 'Fernando', 'Angelia',
+        'Nathanael', 'Aurelia', 'Pranata', 'Marcella', 'Christina',
+        'William', 'Anastasia', 'Benedict', 'Clarissa', 'Raphael',
+    ];
+    $lastNames = [
+        'Pratama', 'Sari', 'Wijaya', 'Putri', 'Halim',
+        'Gunawan', 'Setiawan', 'Santoso', 'Hartono', 'Kurnia',
+        'Tanujaya', 'Liem', 'Sutanto', 'Hendrawan', 'Saputri',
+        'Widjaja', 'Susanto', 'Lukito', 'Winata', 'Permana',
+    ];
+
+    $result = [];
+    foreach ($cabangList as $cabangIndex => $cabang) {
+        $slug = strtolower((string)preg_replace('/[^a-z0-9]+/', '-', str_replace('REC ', '', $cabang)));
+        $slug = trim($slug, '-');
+
+        for ($i = 0; $i < 20; $i++) {
+            $first = $firstNames[($i + $cabangIndex) % count($firstNames)];
+            $middle = $middleNames[(($i * 2) + $cabangIndex) % count($middleNames)];
+            $last = $lastNames[(($i * 3) + $cabangIndex) % count($lastNames)];
+            $num = str_pad((string)($i + 1), 2, '0', STR_PAD_LEFT);
+
+            $result[] = [
+                'id' => $slug . '-' . $num,
+                'nama_lengkap' => $first . ' ' . $middle . ' ' . $last,
+                'asal_cabang' => $cabang,
+            ];
+        }
+    }
+
+    return $result;
+}
+
+function load_kandidat_data(): array
+{
+    $fallback = default_kandidat_data();
+    $decoded = read_json_file(kandidat_file_path(), ['kandidat' => $fallback]);
+    if (!is_array($decoded) || !isset($decoded['kandidat']) || !is_array($decoded['kandidat'])) {
+        return $fallback;
+    }
+
+    $result = [];
+    foreach ($decoded['kandidat'] as $idx => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $id = trim((string)($item['id'] ?? ''));
+        if ($id === '') {
+            $id = 'kandidat-' . ($idx + 1);
+        }
+
+        $namaLengkap = trim((string)($item['nama_lengkap'] ?? ''));
+        $asalCabang = trim((string)($item['asal_cabang'] ?? ''));
+        if ($namaLengkap === '' || $asalCabang === '') {
+            continue;
+        }
+
+        $result[] = [
+            'id' => $id,
+            'nama_lengkap' => $namaLengkap,
+            'asal_cabang' => $asalCabang,
+        ];
+    }
+
+    // Jika file kandidat valid tapi kosong, pertahankan kosong (jangan fallback ke data sample).
+    return $result;
+}
+
+function normalize_header_key(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = preg_replace('/[^a-z0-9]+/', '', $value);
+    return is_string($value) ? $value : '';
+}
+
+function slugify_identifier(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = preg_replace('/[^a-z0-9]+/', '-', $value);
+    $value = is_string($value) ? trim($value, '-') : '';
+    return $value;
+}
+
+function normalize_import_cabang(string $cabang, array $knownCabang): string
+{
+    $cabang = normalize_username($cabang);
+    if ($cabang === '') {
+        return '';
+    }
+
+    $cabangKey = normalize_header_key($cabang);
+    foreach ($knownCabang as $known) {
+        $knownText = trim((string)$known);
+        if ($knownText === '') {
+            continue;
+        }
+        if (hash_equals(normalize_header_key($knownText), $cabangKey)) {
+            return $knownText;
+        }
+    }
+
+    $withoutRec = preg_replace('/^rec[\s\.\-_]*/i', '', $cabang);
+    $withoutRec = is_string($withoutRec) ? trim($withoutRec) : $cabang;
+    if ($withoutRec === '') {
+        return '';
+    }
+
+    $withoutRec = preg_replace('/\s+/', ' ', $withoutRec);
+    if (!is_string($withoutRec) || trim($withoutRec) === '') {
+        return '';
+    }
+
+    return 'REC ' . ucwords(strtolower(trim($withoutRec)));
+}
+
+function known_cabang_values(): array
+{
+    $known = [
+        'REC Kutisari',
+        'REC Nginden',
+        'REC Darmo',
+        'REC Merr',
+        'REC Galaxy Mall',
+        'REC Batam',
+    ];
+
+    foreach (load_user_data() as $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+
+        $cabang = trim((string)($user['asal_cabang'] ?? ''));
+        if ($cabang !== '') {
+            $known[] = $cabang;
+        }
+    }
+
+    foreach (load_kandidat_data() as $kandidat) {
+        if (!is_array($kandidat)) {
+            continue;
+        }
+
+        $cabang = trim((string)($kandidat['asal_cabang'] ?? ''));
+        if ($cabang !== '') {
+            $known[] = $cabang;
+        }
+    }
+
+    $map = [];
+    foreach ($known as $item) {
+        $item = trim((string)$item);
+        if ($item === '') {
+            continue;
+        }
+
+        $key = normalize_header_key($item);
+        if ($key !== '' && !isset($map[$key])) {
+            $map[$key] = $item;
+        }
+    }
+
+    return array_values($map);
+}
+
+function resolve_zip_internal_path(string $basePath, string $targetPath): string
+{
+    $basePath = str_replace('\\', '/', $basePath);
+    $targetPath = str_replace('\\', '/', $targetPath);
+
+    if (str_starts_with($targetPath, '/')) {
+        $combined = ltrim($targetPath, '/');
+    } else {
+        $baseDir = trim(dirname($basePath), '.');
+        $baseDir = trim(str_replace('\\', '/', $baseDir), '/');
+        $combined = ($baseDir !== '' ? $baseDir . '/' : '') . $targetPath;
+    }
+
+    $parts = explode('/', $combined);
+    $normalized = [];
+    foreach ($parts as $part) {
+        if ($part === '' || $part === '.') {
+            continue;
+        }
+        if ($part === '..') {
+            array_pop($normalized);
+            continue;
+        }
+        $normalized[] = $part;
+    }
+
+    return implode('/', $normalized);
+}
+
+function read_xlsx_xml(ZipArchive $zip, string $entry): ?DOMDocument
+{
+    $xml = $zip->getFromName($entry);
+    if (!is_string($xml)) {
+        return null;
+    }
+
+    $dom = new DOMDocument();
+    if (!@$dom->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING)) {
+        return null;
+    }
+
+    return $dom;
+}
+
+function xlsx_shared_strings(ZipArchive $zip): array
+{
+    $dom = read_xlsx_xml($zip, 'xl/sharedStrings.xml');
+    if ($dom === null) {
+        return [];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('x', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+
+    $result = [];
+    $nodes = $xpath->query('/x:sst/x:si');
+    if ($nodes === false) {
+        return [];
+    }
+
+    foreach ($nodes as $node) {
+        $parts = $xpath->query('.//x:t', $node);
+        if ($parts === false) {
+            $result[] = trim((string)$node->textContent);
+            continue;
+        }
+
+        $text = '';
+        foreach ($parts as $part) {
+            $text .= (string)$part->textContent;
+        }
+        $result[] = trim($text);
+    }
+
+    return $result;
+}
+
+function xlsx_sheet_name_path_map(ZipArchive $zip): array
+{
+    $workbookPath = 'xl/workbook.xml';
+    $workbookRelsPath = 'xl/_rels/workbook.xml.rels';
+
+    $workbookDom = read_xlsx_xml($zip, $workbookPath);
+    $relsDom = read_xlsx_xml($zip, $workbookRelsPath);
+    if ($workbookDom === null || $relsDom === null) {
+        return [];
+    }
+
+    $relXpath = new DOMXPath($relsDom);
+    $relXpath->registerNamespace('r', 'http://schemas.openxmlformats.org/package/2006/relationships');
+    $relNodes = $relXpath->query('/r:Relationships/r:Relationship');
+    if ($relNodes === false) {
+        return [];
+    }
+
+    $rels = [];
+    foreach ($relNodes as $relNode) {
+        if (!($relNode instanceof DOMElement)) {
+            continue;
+        }
+        $id = trim((string)$relNode->getAttribute('Id'));
+        $target = trim((string)$relNode->getAttribute('Target'));
+        if ($id !== '' && $target !== '') {
+            $rels[$id] = $target;
+        }
+    }
+
+    $workbookXpath = new DOMXPath($workbookDom);
+    $workbookXpath->registerNamespace('x', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+    $workbookXpath->registerNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+    $sheetNodes = $workbookXpath->query('/x:workbook/x:sheets/x:sheet');
+    if ($sheetNodes === false) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($sheetNodes as $sheetNode) {
+        if (!($sheetNode instanceof DOMElement)) {
+            continue;
+        }
+
+        $name = trim((string)$sheetNode->getAttribute('name'));
+        $rid = trim((string)$sheetNode->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+        if ($rid === '') {
+            $rid = trim((string)$sheetNode->getAttribute('r:id'));
+        }
+        if ($name === '' || $rid === '' || !isset($rels[$rid])) {
+            continue;
+        }
+
+        $sheetPath = resolve_zip_internal_path($workbookPath, $rels[$rid]);
+        if ($sheetPath !== '') {
+            $result[$name] = $sheetPath;
+        }
+    }
+
+    return $result;
+}
+
+function xlsx_column_index(string $cellRef): int
+{
+    if (!preg_match('/^([A-Z]+)[0-9]+$/i', strtoupper(trim($cellRef)), $matches)) {
+        return -1;
+    }
+
+    $letters = strtoupper((string)($matches[1] ?? ''));
+    if ($letters === '') {
+        return -1;
+    }
+
+    $index = 0;
+    for ($i = 0; $i < strlen($letters); $i++) {
+        $index = ($index * 26) + (ord($letters[$i]) - 64);
+    }
+
+    return $index - 1;
+}
+
+function xlsx_cell_text(DOMXPath $xpath, DOMElement $cellNode, array $sharedStrings): string
+{
+    $type = trim((string)$cellNode->getAttribute('t'));
+
+    if ($type === 'inlineStr') {
+        $textNodes = $xpath->query('.//x:is//x:t', $cellNode);
+        if ($textNodes === false) {
+            return trim((string)$cellNode->textContent);
+        }
+        $text = '';
+        foreach ($textNodes as $textNode) {
+            $text .= (string)$textNode->textContent;
+        }
+        return trim($text);
+    }
+
+    $valueNodeList = $xpath->query('./x:v', $cellNode);
+    if ($valueNodeList === false || $valueNodeList->length === 0) {
+        return '';
+    }
+
+    $rawValue = trim((string)$valueNodeList->item(0)?->textContent);
+    if ($rawValue === '') {
+        return '';
+    }
+
+    if ($type === 's') {
+        $idx = (int)$rawValue;
+        return isset($sharedStrings[$idx]) ? (string)$sharedStrings[$idx] : '';
+    }
+
+    return $rawValue;
+}
+
+function xlsx_sheet_rows(ZipArchive $zip, string $sheetPath, array $sharedStrings): array
+{
+    $dom = read_xlsx_xml($zip, $sheetPath);
+    if ($dom === null) {
+        return [];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('x', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+    $rowNodes = $xpath->query('/x:worksheet/x:sheetData/x:row');
+    if ($rowNodes === false) {
+        return [];
+    }
+
+    $rows = [];
+    foreach ($rowNodes as $rowNode) {
+        $cellNodes = $xpath->query('./x:c', $rowNode);
+        if ($cellNodes === false || $cellNodes->length === 0) {
+            continue;
+        }
+
+        $rowData = [];
+        $maxCol = -1;
+        foreach ($cellNodes as $cellNode) {
+            if (!($cellNode instanceof DOMElement)) {
+                continue;
+            }
+
+            $cellRef = strtoupper(trim((string)$cellNode->getAttribute('r')));
+            $colIndex = xlsx_column_index($cellRef);
+            if ($colIndex < 0) {
+                $colIndex = $maxCol + 1;
+            }
+
+            $rowData[$colIndex] = xlsx_cell_text($xpath, $cellNode, $sharedStrings);
+            if ($colIndex > $maxCol) {
+                $maxCol = $colIndex;
+            }
+        }
+
+        if ($maxCol < 0) {
+            continue;
+        }
+
+        ksort($rowData);
+        $normalizedRow = [];
+        $hasValue = false;
+        for ($i = 0; $i <= $maxCol; $i++) {
+            $value = (string)($rowData[$i] ?? '');
+            if (trim($value) !== '') {
+                $hasValue = true;
+            }
+            $normalizedRow[$i] = $value;
+        }
+
+        if ($hasValue) {
+            $rows[] = $normalizedRow;
+        }
+    }
+
+    return $rows;
+}
+
+function load_xlsx_sheets(string $xlsxPath): array
+{
+    if (!class_exists('ZipArchive')) {
+        return [
+            'ok' => false,
+            'error' => 'Ekstensi ZIP tidak tersedia di PHP server.',
+            'sheets' => [],
+        ];
+    }
+
+    $zip = new ZipArchive();
+    $openResult = $zip->open($xlsxPath);
+    if ($openResult !== true) {
+        return [
+            'ok' => false,
+            'error' => 'File Excel tidak bisa dibuka.',
+            'sheets' => [],
+        ];
+    }
+
+    $sheetMap = xlsx_sheet_name_path_map($zip);
+    if ($sheetMap === []) {
+        $zip->close();
+        return [
+            'ok' => false,
+            'error' => 'Sheet Excel tidak ditemukan atau format workbook tidak valid.',
+            'sheets' => [],
+        ];
+    }
+
+    $sharedStrings = xlsx_shared_strings($zip);
+    $sheets = [];
+    foreach ($sheetMap as $sheetName => $sheetPath) {
+        $rows = xlsx_sheet_rows($zip, $sheetPath, $sharedStrings);
+        $sheets[(string)$sheetName] = $rows;
+    }
+    $zip->close();
+
+    return [
+        'ok' => true,
+        'error' => '',
+        'sheets' => $sheets,
+    ];
+}
+
+function find_xlsx_sheet_name(array $sheetNames, array $keywordGroups): ?string
+{
+    $normalizedNames = [];
+    foreach ($sheetNames as $name) {
+        $normalizedNames[(string)$name] = normalize_header_key((string)$name);
+    }
+
+    foreach ($keywordGroups as $keywords) {
+        if (!is_array($keywords) || $keywords === []) {
+            continue;
+        }
+
+        $needleParts = [];
+        foreach ($keywords as $keyword) {
+            $key = normalize_header_key((string)$keyword);
+            if ($key !== '') {
+                $needleParts[] = $key;
+            }
+        }
+        if ($needleParts === []) {
+            continue;
+        }
+
+        foreach ($normalizedNames as $originalName => $normalizedName) {
+            $matched = true;
+            foreach ($needleParts as $needle) {
+                if (!str_contains($normalizedName, $needle)) {
+                    $matched = false;
+                    break;
+                }
+            }
+            if ($matched) {
+                return $originalName;
+            }
+        }
+    }
+
+    return null;
+}
+
+function extract_sheet_header_map(array $headerRow): array
+{
+    $map = [];
+    foreach ($headerRow as $idx => $headerText) {
+        $key = normalize_header_key((string)$headerText);
+        if ($key !== '' && !isset($map[$key])) {
+            $map[$key] = (int)$idx;
+        }
+    }
+    return $map;
+}
+
+function header_index(array $headerMap, array $candidates): ?int
+{
+    foreach ($candidates as $candidate) {
+        $key = normalize_header_key((string)$candidate);
+        if ($key !== '' && isset($headerMap[$key])) {
+            return (int)$headerMap[$key];
+        }
+    }
+    return null;
+}
+
+function phone_tail_to_password(string $rawValue): string
+{
+    $rawValue = trim($rawValue);
+    if ($rawValue === '') {
+        return '';
+    }
+    $digits = preg_replace('/\D+/', '', $rawValue);
+    if (!is_string($digits) || $digits === '' || strlen($digits) < 6) {
+        return '';
+    }
+
+    return substr($digits, -6);
+}
+
+function generate_import_kandidat_id(string $namaLengkap, string $asalCabang, array &$usedIds): string
+{
+    $base = slugify_identifier($asalCabang . '-' . $namaLengkap);
+    if ($base === '') {
+        $base = 'kandidat';
+    }
+    if (strlen($base) > 42) {
+        $base = substr($base, 0, 42);
+    }
+
+    $candidate = $base;
+    $suffix = 2;
+    while (isset($usedIds[$candidate])) {
+        $suffixText = '-' . $suffix;
+        $trimmedBase = $base;
+        $maxBaseLen = 48 - strlen($suffixText);
+        if ($maxBaseLen < 1) {
+            $maxBaseLen = 1;
+        }
+        if (strlen($trimmedBase) > $maxBaseLen) {
+            $trimmedBase = substr($trimmedBase, 0, $maxBaseLen);
+        }
+        $candidate = $trimmedBase . $suffixText;
+        $suffix++;
+    }
+
+    $usedIds[$candidate] = true;
+    return $candidate;
+}
+
+function upload_error_message(int $errorCode): string
+{
+    return match ($errorCode) {
+        UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Ukuran file melebihi batas upload.',
+        UPLOAD_ERR_PARTIAL => 'Upload file tidak selesai.',
+        UPLOAD_ERR_NO_FILE => 'File Excel belum dipilih.',
+        UPLOAD_ERR_NO_TMP_DIR => 'Folder temporary upload tidak tersedia.',
+        UPLOAD_ERR_CANT_WRITE => 'File upload gagal ditulis ke disk.',
+        UPLOAD_ERR_EXTENSION => 'Upload file dibatalkan oleh ekstensi PHP.',
+        default => 'Terjadi kesalahan saat upload file.',
+    };
+}
+
+function import_users_and_kandidat_from_xlsx(string $xlsxPath): array
+{
+    $result = [
+        'ok' => false,
+        'errors' => [],
+        'warnings' => [],
+        'summary' => [
+            'users_inserted' => 0,
+            'users_updated' => 0,
+            'users_skipped' => 0,
+            'kandidat_inserted' => 0,
+            'kandidat_updated' => 0,
+            'kandidat_skipped' => 0,
+        ],
+    ];
+
+    $xlsx = load_xlsx_sheets($xlsxPath);
+    if (!(bool)($xlsx['ok'] ?? false)) {
+        $result['errors'][] = (string)($xlsx['error'] ?? 'File Excel tidak valid.');
+        return $result;
+    }
+
+    $sheets = (array)($xlsx['sheets'] ?? []);
+    $sheetNames = array_keys($sheets);
+    $userSheetName = find_xlsx_sheet_name($sheetNames, [
+        ['master', 'pemilih'],
+        ['pemilih'],
+        ['user'],
+    ]);
+    $kandidatSheetName = find_xlsx_sheet_name($sheetNames, [
+        ['master', 'kandidat'],
+        ['kandidat'],
+    ]);
+
+    if ($userSheetName === null) {
+        $result['errors'][] = 'Sheet user tidak ditemukan. Gunakan sheet MASTER PEMILIH.';
+    }
+    if ($kandidatSheetName === null) {
+        $result['errors'][] = 'Sheet kandidat tidak ditemukan. Gunakan sheet MASTER KANDIDAT.';
+    }
+    if ($result['errors'] !== []) {
+        return $result;
+    }
+
+    $knownCabang = known_cabang_values();
+
+    $existingUsers = load_user_data();
+    $userKeyIndex = [];
+    foreach ($existingUsers as $idx => $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+        $nama = normalize_username((string)($user['nama_lengkap'] ?? ''));
+        $cabang = trim((string)($user['asal_cabang'] ?? ''));
+        $role = normalize_role((string)($user['role'] ?? 'user'));
+        if ($nama === '' || $cabang === '' || $role !== 'user') {
+            continue;
+        }
+        $key = strtolower($nama) . '|' . strtolower($cabang) . '|user';
+        $userKeyIndex[$key] = (int)$idx;
+    }
+
+    $userRows = (array)($sheets[$userSheetName] ?? []);
+    if (count($userRows) < 2) {
+        $result['errors'][] = 'Sheet ' . $userSheetName . ' tidak berisi data user.';
+        return $result;
+    }
+
+    $userHeaderMap = extract_sheet_header_map((array)$userRows[0]);
+    $idxUserNama = header_index($userHeaderMap, ['nama lengkap', 'namalengkap', 'nama']);
+    $idxUserNomorTelpon = header_index($userHeaderMap, [
+        'nomor telpon',
+        'nomor telepon',
+        'no telpon',
+        'no telepon',
+        'nomor hp',
+        'no hp',
+        'telepon',
+        'telpon',
+        'hp',
+    ]);
+    $idxUserCabang = header_index($userHeaderMap, ['cabang']);
+    if ($idxUserNama === null || $idxUserNomorTelpon === null || $idxUserCabang === null) {
+        $result['errors'][] = 'Header sheet user wajib berisi: NAMA LENGKAP, NOMOR TELPON, CABANG.';
+        return $result;
+    }
+
+    for ($i = 1; $i < count($userRows); $i++) {
+        $row = (array)$userRows[$i];
+        $nama = normalize_username((string)($row[$idxUserNama] ?? ''));
+        $nomorTelponRaw = trim((string)($row[$idxUserNomorTelpon] ?? ''));
+        $cabangRaw = trim((string)($row[$idxUserCabang] ?? ''));
+
+        if ($nama === '' && $nomorTelponRaw === '' && $cabangRaw === '') {
+            continue;
+        }
+
+        $cabang = normalize_import_cabang($cabangRaw, $knownCabang);
+        if ($nama === '' || $nomorTelponRaw === '' || $cabang === '') {
+            $result['summary']['users_skipped']++;
+            if (count($result['warnings']) < 200) {
+                $result['warnings'][] = 'Baris user #' . ($i + 1) . ' dilewati karena data tidak lengkap.';
+            }
+            continue;
+        }
+
+        $username = short_username_from_fullname($nama);
+        $passwordPlain = phone_tail_to_password($nomorTelponRaw);
+        if ($username === '' || $passwordPlain === '') {
+            $result['summary']['users_skipped']++;
+            if (count($result['warnings']) < 200) {
+                $result['warnings'][] = 'Baris user #' . ($i + 1) . ' dilewati karena format nama/nomor telpon tidak valid (minimal 6 digit).';
+            }
+            continue;
+        }
+
+        $passwordHash = password_hash($passwordPlain, PASSWORD_DEFAULT);
+        if (!is_string($passwordHash) || $passwordHash === '') {
+            $result['summary']['users_skipped']++;
+            if (count($result['warnings']) < 200) {
+                $result['warnings'][] = 'Baris user #' . ($i + 1) . ' gagal di-hash.';
+            }
+            continue;
+        }
+
+        $userItem = [
+            'nama_lengkap' => $nama,
+            'username' => $username,
+            'password' => $passwordHash,
+            'asal_cabang' => $cabang,
+            'role' => 'user',
+        ];
+
+        $userKey = strtolower($nama) . '|' . strtolower($cabang) . '|user';
+        if (isset($userKeyIndex[$userKey])) {
+            $existingUsers[$userKeyIndex[$userKey]] = $userItem;
+            $result['summary']['users_updated']++;
+        } else {
+            $existingUsers[] = $userItem;
+            $userKeyIndex[$userKey] = count($existingUsers) - 1;
+            $result['summary']['users_inserted']++;
+            $knownCabang[] = $cabang;
+        }
+    }
+
+    $existingKandidat = load_kandidat_data();
+    $usedKandidatIds = [];
+    $kandidatKeyIndex = [];
+    foreach ($existingKandidat as $idx => $kandidat) {
+        if (!is_array($kandidat)) {
+            continue;
+        }
+
+        $id = trim((string)($kandidat['id'] ?? ''));
+        $nama = normalize_username((string)($kandidat['nama_lengkap'] ?? ''));
+        $cabang = trim((string)($kandidat['asal_cabang'] ?? ''));
+        if ($id !== '') {
+            $usedKandidatIds[$id] = true;
+        }
+        if ($nama !== '' && $cabang !== '') {
+            $kandidatKey = strtolower($nama) . '|' . strtolower($cabang);
+            $kandidatKeyIndex[$kandidatKey] = (int)$idx;
+        }
+    }
+
+    $kandidatRows = (array)($sheets[$kandidatSheetName] ?? []);
+    if (count($kandidatRows) < 2) {
+        $result['errors'][] = 'Sheet ' . $kandidatSheetName . ' tidak berisi data kandidat.';
+        return $result;
+    }
+
+    $kandidatHeaderMap = extract_sheet_header_map((array)$kandidatRows[0]);
+    $idxKandidatNama = header_index($kandidatHeaderMap, ['nama lengkap', 'namalengkap', 'nama']);
+    $idxKandidatCabang = header_index($kandidatHeaderMap, ['cabang']);
+    if ($idxKandidatNama === null || $idxKandidatCabang === null) {
+        $result['errors'][] = 'Header sheet kandidat wajib berisi: NAMA LENGKAP, CABANG.';
+        return $result;
+    }
+
+    for ($i = 1; $i < count($kandidatRows); $i++) {
+        $row = (array)$kandidatRows[$i];
+        $nama = normalize_username((string)($row[$idxKandidatNama] ?? ''));
+        $cabangRaw = trim((string)($row[$idxKandidatCabang] ?? ''));
+
+        if ($nama === '' && $cabangRaw === '') {
+            continue;
+        }
+
+        $cabang = normalize_import_cabang($cabangRaw, $knownCabang);
+        if ($nama === '' || $cabang === '') {
+            $result['summary']['kandidat_skipped']++;
+            if (count($result['warnings']) < 200) {
+                $result['warnings'][] = 'Baris kandidat #' . ($i + 1) . ' dilewati karena data tidak lengkap.';
+            }
+            continue;
+        }
+
+        $kandidatKey = strtolower($nama) . '|' . strtolower($cabang);
+        if (isset($kandidatKeyIndex[$kandidatKey])) {
+            $idx = $kandidatKeyIndex[$kandidatKey];
+            $existingId = trim((string)($existingKandidat[$idx]['id'] ?? ''));
+            if ($existingId === '') {
+                $existingId = generate_import_kandidat_id($nama, $cabang, $usedKandidatIds);
+            } else {
+                $usedKandidatIds[$existingId] = true;
+            }
+
+            $existingKandidat[$idx] = [
+                'id' => $existingId,
+                'nama_lengkap' => $nama,
+                'asal_cabang' => $cabang,
+            ];
+            $result['summary']['kandidat_updated']++;
+        } else {
+            $newId = generate_import_kandidat_id($nama, $cabang, $usedKandidatIds);
+            $existingKandidat[] = [
+                'id' => $newId,
+                'nama_lengkap' => $nama,
+                'asal_cabang' => $cabang,
+            ];
+            $kandidatKeyIndex[$kandidatKey] = count($existingKandidat) - 1;
+            $result['summary']['kandidat_inserted']++;
+            $knownCabang[] = $cabang;
+        }
+    }
+
+    if (!write_json_file_atomic(user_file_path(), ['users' => $existingUsers])) {
+        $result['errors'][] = 'Gagal menyimpan data user hasil import.';
+        return $result;
+    }
+
+    if (!write_json_file_atomic(kandidat_file_path(), ['kandidat' => $existingKandidat])) {
+        $result['errors'][] = 'Gagal menyimpan data kandidat hasil import.';
+        return $result;
+    }
+
+    $result['ok'] = true;
+    return $result;
+}
+
+function find_kandidat_by_id(array $kandidatList, string $kandidatId): ?array
+{
+    foreach ($kandidatList as $kandidat) {
+        if ((string)($kandidat['id'] ?? '') === $kandidatId) {
+            return $kandidat;
+        }
+    }
+
+    return null;
+}
+
+function kandidat_option_label(array $kandidat): string
+{
+    $nama = trim((string)($kandidat['nama_lengkap'] ?? ''));
+    $cabang = trim((string)($kandidat['asal_cabang'] ?? ''));
+    return $nama . ' - ' . $cabang;
+}
+
+function find_kandidat_by_option_label(array $kandidatList, string $label): ?array
+{
+    $label = strtolower(trim($label));
+    if ($label === '') {
+        return null;
+    }
+
+    foreach ($kandidatList as $kandidat) {
+        if (strtolower(kandidat_option_label($kandidat)) === $label) {
+            return $kandidat;
+        }
+    }
+
+    return null;
+}
+
+function load_pemilihan_data(): array
+{
+    $empty = ['pemilihan' => []];
+    $decoded = read_json_file(pemilihan_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['pemilihan']) || !is_array($decoded['pemilihan'])) {
+        return $empty;
+    }
+
+    $normalizedItems = [];
+    foreach ($decoded['pemilihan'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $item['bidang'] = normalize_vote_bidang_title(
+            (string)($item['bidang'] ?? ''),
+            (string)($item['asal_cabang_user'] ?? '')
+        );
+        $normalizedItems[] = $item;
+    }
+
+    return ['pemilihan' => $normalizedItems];
+}
+
+function load_vote_log_data(): array
+{
+    $empty = ['logs' => []];
+    $decoded = read_json_file(vote_log_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['logs']) || !is_array($decoded['logs'])) {
+        return $empty;
+    }
+
+    $normalizedLogs = [];
+    foreach ($decoded['logs'] as $log) {
+        if (!is_array($log)) {
+            continue;
+        }
+
+        $log['bidang'] = normalize_vote_bidang_title(
+            (string)($log['bidang'] ?? ''),
+            (string)($log['asal_cabang_user'] ?? '')
+        );
+        $normalizedLogs[] = $log;
+    }
+
+    return ['logs' => $normalizedLogs];
+}
+
+function load_login_rate_data(): array
+{
+    $empty = default_login_rate_data();
+    $decoded = read_json_file(login_rate_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['records']) || !is_array($decoded['records'])) {
+        return $empty;
+    }
+    return $decoded;
+}
+
+function save_login_rate_data(array $data): void
+{
+    if (!isset($data['records']) || !is_array($data['records'])) {
+        $data = default_login_rate_data();
+    }
+    write_json_file_atomic(login_rate_file_path(), $data);
+}
+
+function flagging_candidate_key(string $bidang, string $kandidatNama, string $kandidatCabang): string
+{
+    $parts = [
+        normalize_header_key($bidang),
+        normalize_header_key($kandidatNama),
+        normalize_header_key($kandidatCabang),
+    ];
+
+    return hash('sha256', implode('|', $parts));
+}
+
+function load_flagging_data(): array
+{
+    $empty = ['flags' => []];
+    $decoded = read_json_file(flagging_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['flags']) || !is_array($decoded['flags'])) {
+        return $empty;
+    }
+
+    $normalized = [];
+    foreach ($decoded['flags'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+            continue;
+        }
+
+        $lanjutProses = !empty($item['lanjut_proses']);
+        $lolosScreening = !empty($item['lolos_screening']) && $lanjutProses;
+        $updatedAt = trim((string)($item['updated_at'] ?? ''));
+        $updatedBy = trim((string)($item['updated_by'] ?? ''));
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+        }
+
+        $normalized[] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'lanjut_proses' => $lanjutProses,
+            'lolos_screening' => $lolosScreening,
+            'updated_at' => $updatedAt,
+            'updated_by' => $updatedBy,
+        ];
+    }
+
+    return ['flags' => $normalized];
+}
+
+function load_flagging_map(): array
+{
+    $data = load_flagging_data();
+    $map = [];
+    foreach ((array)($data['flags'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        $map[$key] = $item;
+    }
+
+    return $map;
+}
+
+function save_flagging_map(array $map): bool
+{
+    $flags = [];
+    foreach ($map as $key => $item) {
+        if (!is_string($key) || !is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+            continue;
+        }
+
+        $lanjutProses = !empty($item['lanjut_proses']);
+        $lolosScreening = !empty($item['lolos_screening']) && $lanjutProses;
+        if (!$lanjutProses && !$lolosScreening) {
+            continue;
+        }
+
+        $flags[] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'lanjut_proses' => $lanjutProses,
+            'lolos_screening' => $lolosScreening,
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => trim((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    usort($flags, static function (array $a, array $b): int {
+        $left = (string)($a['bidang'] ?? '') . '|' . (string)($a['kandidat_nama'] ?? '') . '|' . (string)($a['kandidat_cabang'] ?? '');
+        $right = (string)($b['bidang'] ?? '') . '|' . (string)($b['kandidat_nama'] ?? '') . '|' . (string)($b['kandidat_cabang'] ?? '');
+        return strnatcasecmp($left, $right);
+    });
+
+    return write_json_file_atomic(flagging_file_path(), ['flags' => $flags]);
+}
+
+function load_wawancara_assignment_data(): array
+{
+    $empty = ['assignments' => []];
+    $decoded = read_json_file(wawancara_assignment_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['assignments']) || !is_array($decoded['assignments'])) {
+        return $empty;
+    }
+
+    $normalized = [];
+    foreach ($decoded['assignments'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        $interviewerLogin = normalize_login_username((string)($item['interviewer_login_username'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '' || $interviewerLogin === '') {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+        }
+
+        $normalized[] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'interviewer_login_username' => $interviewerLogin,
+            'interviewer_nama_lengkap' => normalize_username((string)($item['interviewer_nama_lengkap'] ?? '')),
+            'interviewer_asal_cabang' => trim((string)($item['interviewer_asal_cabang'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    return ['assignments' => $normalized];
+}
+
+function load_wawancara_assignment_map(): array
+{
+    $data = load_wawancara_assignment_data();
+    $map = [];
+    foreach ((array)($data['assignments'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        $map[$key] = $item;
+    }
+
+    return $map;
+}
+
+function save_wawancara_assignment_map(array $map): bool
+{
+    $assignments = [];
+    foreach ($map as $key => $item) {
+        if (!is_string($key) || !is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        $interviewerLogin = normalize_login_username((string)($item['interviewer_login_username'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '' || $interviewerLogin === '') {
+            continue;
+        }
+
+        $assignments[] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'interviewer_login_username' => $interviewerLogin,
+            'interviewer_nama_lengkap' => normalize_username((string)($item['interviewer_nama_lengkap'] ?? '')),
+            'interviewer_asal_cabang' => trim((string)($item['interviewer_asal_cabang'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    usort($assignments, static function (array $a, array $b): int {
+        $left = (string)($a['bidang'] ?? '') . '|' . (string)($a['kandidat_nama'] ?? '') . '|' . (string)($a['kandidat_cabang'] ?? '');
+        $right = (string)($b['bidang'] ?? '') . '|' . (string)($b['kandidat_nama'] ?? '') . '|' . (string)($b['kandidat_cabang'] ?? '');
+        return strnatcasecmp($left, $right);
+    });
+
+    return write_json_file_atomic(wawancara_assignment_file_path(), ['assignments' => $assignments]);
+}
+
+function set_candidate_interviewer_assignment(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $interviewerLoginUsername,
+    string $interviewerNamaLengkap,
+    string $interviewerAsalCabang,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $interviewerLoginUsername = normalize_login_username($interviewerLoginUsername);
+    $interviewerNamaLengkap = normalize_username($interviewerNamaLengkap);
+    $interviewerAsalCabang = trim($interviewerAsalCabang);
+    $updatedBy = normalize_username($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk assignment pewawancara.'];
+    }
+
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_wawancara_assignment_map();
+
+    if ($interviewerLoginUsername === '') {
+        unset($map[$key]);
+    } else {
+        $map[$key] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'interviewer_login_username' => $interviewerLoginUsername,
+            'interviewer_nama_lengkap' => $interviewerNamaLengkap,
+            'interviewer_asal_cabang' => $interviewerAsalCabang,
+            'updated_at' => date('Y-m-d H:i:s', current_time()),
+            'updated_by' => $updatedBy,
+        ];
+    }
+
+    if (!save_wawancara_assignment_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal menyimpan assignment pewawancara.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => $interviewerLoginUsername === ''
+            ? 'Assignment pewawancara berhasil dihapus.'
+            : 'Assignment pewawancara berhasil diperbarui.',
+    ];
+}
+
+function find_interviewer_user_by_login_username(array $users, string $loginUsername): ?array
+{
+    $targetLogin = normalize_login_username($loginUsername);
+    if ($targetLogin === '') {
+        return null;
+    }
+
+    foreach ($users as $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+        if (normalize_role((string)($user['role'] ?? 'user')) !== 'pewawancara') {
+            continue;
+        }
+
+        $login = normalize_login_username((string)($user['username'] ?? ''));
+        if ($login === '' || !hash_equals($login, $targetLogin)) {
+            continue;
+        }
+
+        return [
+            'login_username' => $login,
+            'nama_lengkap' => normalize_username((string)($user['nama_lengkap'] ?? $user['username'] ?? '')),
+            'asal_cabang' => trim((string)($user['asal_cabang'] ?? '')),
+        ];
+    }
+
+    return null;
+}
+
+function kesediaan_hubungan_options(): array
+{
+    return [
+        'Diri Sendiri (Kandidat)',
+        'Suami/Istri',
+        'Ibu',
+        'Ayah',
+        'Anak',
+        'Wali/Keluarga',
+    ];
+}
+
+function kesediaan_single_submit_hubungan_options(): array
+{
+    return [
+        'Diri Sendiri (Kandidat)',
+        'Ibu',
+        'Ayah',
+    ];
+}
+
+function kesediaan_is_single_submit_hubungan(string $hubungan): bool
+{
+    $normalized = normalize_kesediaan_hubungan($hubungan);
+    if ($normalized === '') {
+        return false;
+    }
+    return in_array($normalized, kesediaan_single_submit_hubungan_options(), true);
+}
+
+function kesediaan_used_single_submit_hubungan(array $candidateForms): array
+{
+    $singleSet = array_fill_keys(kesediaan_single_submit_hubungan_options(), true);
+    $used = [];
+    foreach ($candidateForms as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $hubungan = normalize_kesediaan_hubungan((string)($item['hubungan'] ?? ''));
+        if ($hubungan !== '' && isset($singleSet[$hubungan])) {
+            $used[$hubungan] = true;
+        }
+    }
+    return array_keys($used);
+}
+
+function normalize_kesediaan_hubungan(string $hubungan): string
+{
+    $raw = strtolower(trim(normalize_username($hubungan)));
+    if ($raw === '') {
+        return '';
+    }
+
+    $aliasMap = [
+        'kandidat' => 'Diri Sendiri (Kandidat)',
+        'diri sendiri' => 'Diri Sendiri (Kandidat)',
+        'diri sendiri kandidat' => 'Diri Sendiri (Kandidat)',
+        'diri sendiri (kandidat)' => 'Diri Sendiri (Kandidat)',
+        'pribadi kandidat' => 'Diri Sendiri (Kandidat)',
+        'suami' => 'Suami/Istri',
+        'istri' => 'Suami/Istri',
+        'suami/istri' => 'Suami/Istri',
+        'istri/suami' => 'Suami/Istri',
+        'ayah' => 'Ayah',
+        'ibu' => 'Ibu',
+        'anak' => 'Anak',
+        'wali' => 'Wali/Keluarga',
+        'keluarga' => 'Wali/Keluarga',
+        'wali/keluarga' => 'Wali/Keluarga',
+    ];
+
+    if (isset($aliasMap[$raw])) {
+        return $aliasMap[$raw];
+    }
+
+    foreach (kesediaan_hubungan_options() as $allowed) {
+        if (strcasecmp($raw, strtolower($allowed)) === 0) {
+            return $allowed;
+        }
+    }
+    return '';
+}
+
+function normalize_kesediaan_status(string $status): string
+{
+    $status = strtolower(trim($status));
+    return match ($status) {
+        'bersedia' => 'bersedia',
+        'tidak_bersedia' => 'tidak_bersedia',
+        default => '',
+    };
+}
+
+function normalize_kesediaan_alasan(string $alasan): string
+{
+    $alasan = str_replace(["\r\n", "\r"], "\n", $alasan);
+    $alasan = preg_replace("/[ \t]+/", ' ', $alasan);
+    $alasan = is_string($alasan) ? trim($alasan) : '';
+    if ($alasan === '') {
+        return '';
+    }
+    if (function_exists('mb_substr')) {
+        return mb_substr($alasan, 0, 2000, 'UTF-8');
+    }
+    return substr($alasan, 0, 2000);
+}
+
+function kesediaan_upload_dir(): string
+{
+    $baseDir = secure_data_dir() . '/uploads';
+    $targetDir = $baseDir . '/kesediaan';
+    if (!ensure_directory_writable($baseDir)) {
+        return '';
+    }
+    if (!ensure_directory_writable($targetDir)) {
+        return '';
+    }
+    @chmod($baseDir, 0700);
+    @chmod($targetDir, 0700);
+    return $targetDir;
+}
+
+function kesediaan_uploaded_file_absolute_path(string $storedPath): string
+{
+    $storedPath = trim(str_replace('\\', '/', $storedPath));
+    if ($storedPath === '') {
+        return '';
+    }
+
+    if (strpos($storedPath, 'uploads/kesediaan/') !== 0) {
+        return '';
+    }
+
+    return secure_data_dir() . '/' . $storedPath;
+}
+
+function kesediaan_file_extension(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+    $ext = strtolower((string)pathinfo($value, PATHINFO_EXTENSION));
+    return trim($ext);
+}
+
+function kesediaan_is_image_extension(string $ext): bool
+{
+    return in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'heif'], true);
+}
+
+function kesediaan_form_is_image_document(array $form): bool
+{
+    $mime = strtolower(trim((string)($form['file_mime'] ?? '')));
+    if ($mime !== '' && strpos($mime, 'image/') === 0) {
+        return true;
+    }
+
+    $originalExt = kesediaan_file_extension((string)($form['file_name_original'] ?? ''));
+    if ($originalExt !== '' && kesediaan_is_image_extension($originalExt)) {
+        return true;
+    }
+
+    $storedExt = kesediaan_file_extension((string)($form['file_path'] ?? ''));
+    return $storedExt !== '' && kesediaan_is_image_extension($storedExt);
+}
+
+function kesediaan_form_is_pdf_document(array $form): bool
+{
+    $mime = strtolower(trim((string)($form['file_mime'] ?? '')));
+    if ($mime === 'application/pdf') {
+        return true;
+    }
+
+    $originalExt = kesediaan_file_extension((string)($form['file_name_original'] ?? ''));
+    if ($originalExt === 'pdf') {
+        return true;
+    }
+
+    $storedExt = kesediaan_file_extension((string)($form['file_path'] ?? ''));
+    return $storedExt === 'pdf';
+}
+
+function kesediaan_form_public_id(array $form): string
+{
+    $formId = trim((string)($form['form_id'] ?? ''));
+    if ($formId !== '') {
+        return $formId;
+    }
+
+    $seed = trim((string)($form['key'] ?? ''))
+        . '|'
+        . trim((string)($form['file_path'] ?? ''))
+        . '|'
+        . trim((string)($form['updated_at'] ?? ''))
+        . '|'
+        . trim((string)($form['kandidat_nama'] ?? ''))
+        . '|'
+        . trim((string)($form['kandidat_cabang'] ?? ''));
+    return 'legacy_' . sha1($seed);
+}
+
+function find_kesediaan_form_by_public_id(string $publicId): ?array
+{
+    $publicId = trim($publicId);
+    if ($publicId === '') {
+        return null;
+    }
+
+    $formsData = load_kesediaan_form_data();
+    foreach ((array)($formsData['forms'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        if (!hash_equals(kesediaan_form_public_id($item), $publicId)) {
+            continue;
+        }
+        return $item;
+    }
+
+    return null;
+}
+
+function kesediaan_form_view_url(array $form, bool $download = false): string
+{
+    $params = [
+        'page' => 'kesediaan_file',
+        'form_id' => kesediaan_form_public_id($form),
+    ];
+    if ($download) {
+        $params['download'] = '1';
+    }
+    return app_index_url($params);
+}
+
+function sanitize_download_filename(string $name): string
+{
+    $name = trim($name);
+    if ($name === '') {
+        return 'dokumen-kesediaan';
+    }
+
+    $name = preg_replace('/[^\w.\- ]+/u', '-', $name);
+    if (!is_string($name)) {
+        return 'dokumen-kesediaan';
+    }
+    $name = trim($name, ".- \t\n\r\0\x0B");
+    if ($name === '') {
+        return 'dokumen-kesediaan';
+    }
+    return $name;
+}
+
+function save_kesediaan_uploaded_file(array $uploadedFile): array
+{
+    $uploadError = (int)($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $message = match ($uploadError) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Ukuran file melebihi batas upload.',
+            UPLOAD_ERR_PARTIAL => 'Upload file tidak selesai.',
+            UPLOAD_ERR_NO_FILE => 'File dokumen kesediaan belum dipilih.',
+            UPLOAD_ERR_NO_TMP_DIR => 'Folder temporary upload tidak tersedia.',
+            UPLOAD_ERR_CANT_WRITE => 'File upload gagal ditulis ke disk.',
+            UPLOAD_ERR_EXTENSION => 'Upload file dibatalkan oleh ekstensi PHP.',
+            default => 'Terjadi kesalahan saat upload file.',
+        };
+        return ['ok' => false, 'message' => $message];
+    }
+
+    $tmpPath = (string)($uploadedFile['tmp_name'] ?? '');
+    if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        return ['ok' => false, 'message' => 'File upload tidak valid.'];
+    }
+
+    $fileSize = (int)($uploadedFile['size'] ?? 0);
+    if ($fileSize <= 0 || $fileSize > KESEDIAAN_UPLOAD_MAX_BYTES) {
+        return ['ok' => false, 'message' => 'Ukuran file melebihi batas maksimal 8 MB.'];
+    }
+
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mimeType = '';
+    if ($finfo !== false) {
+        $detected = finfo_file($finfo, $tmpPath);
+        finfo_close($finfo);
+        if (is_string($detected)) {
+            $mimeType = strtolower(trim($detected));
+        }
+    }
+
+    $allowedMimeExtensions = [
+        'application/pdf' => 'pdf',
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        'image/tiff' => 'tif',
+        'image/heic' => 'heic',
+        'image/heif' => 'heif',
+    ];
+
+    if ($mimeType === '' || !isset($allowedMimeExtensions[$mimeType])) {
+        return ['ok' => false, 'message' => 'Format file harus PDF atau gambar (jpg/png/webp/gif/bmp/tiff/heic).'];
+    }
+
+    $uploadDir = kesediaan_upload_dir();
+    if ($uploadDir === '') {
+        return ['ok' => false, 'message' => 'Folder penyimpanan upload tidak tersedia.'];
+    }
+
+    $ext = $allowedMimeExtensions[$mimeType];
+    $storedFilename = 'kesediaan-' . random_hex(12) . '.' . $ext;
+    $targetPath = $uploadDir . '/' . $storedFilename;
+    if (!@move_uploaded_file($tmpPath, $targetPath)) {
+        return ['ok' => false, 'message' => 'Gagal menyimpan file upload.'];
+    }
+    @chmod($targetPath, 0600);
+
+    return [
+        'ok' => true,
+        'stored_path' => 'uploads/kesediaan/' . $storedFilename,
+        'stored_filename' => $storedFilename,
+        'original_name' => trim((string)($uploadedFile['name'] ?? '')),
+        'mime_type' => $mimeType,
+        'size' => $fileSize,
+    ];
+}
+
+function load_kesediaan_form_data(): array
+{
+    $empty = ['forms' => []];
+    $decoded = read_json_file(kesediaan_form_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['forms']) || !is_array($decoded['forms'])) {
+        return $empty;
+    }
+
+    $normalized = [];
+    foreach ($decoded['forms'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        $hubungan = normalize_kesediaan_hubungan((string)($item['hubungan'] ?? ''));
+        $namaPihak = normalize_username((string)($item['nama_pihak'] ?? ''));
+        $status = normalize_kesediaan_status((string)($item['status_kesediaan'] ?? ''));
+        $alasan = normalize_kesediaan_alasan((string)($item['alasan'] ?? ''));
+        $filePath = trim((string)($item['file_path'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '' || $hubungan === '' || $status === '' || $filePath === '') {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+        }
+
+        $normalized[] = [
+            'key' => $key,
+            'form_id' => trim((string)($item['form_id'] ?? '')),
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'hubungan' => $hubungan,
+            'nama_pihak' => $namaPihak,
+            'status_kesediaan' => $status,
+            'alasan' => $alasan,
+            'file_path' => $filePath,
+            'file_name_original' => trim((string)($item['file_name_original'] ?? '')),
+            'file_mime' => trim((string)($item['file_mime'] ?? '')),
+            'file_size' => (int)($item['file_size'] ?? 0),
+            'interviewer_login_username' => normalize_login_username((string)($item['interviewer_login_username'] ?? '')),
+            'interviewer_nama_lengkap' => normalize_username((string)($item['interviewer_nama_lengkap'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    return ['forms' => $normalized];
+}
+
+function load_kesediaan_form_map(): array
+{
+    $data = load_kesediaan_form_data();
+    $map = [];
+    foreach ((array)($data['forms'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        if (!isset($map[$key])) {
+            $map[$key] = [];
+        }
+        $map[$key][] = $item;
+    }
+
+    foreach ($map as $key => $items) {
+        if (!is_array($items)) {
+            $map[$key] = [];
+            continue;
+        }
+        usort($items, static function (array $a, array $b): int {
+            return strcmp((string)($b['updated_at'] ?? ''), (string)($a['updated_at'] ?? ''));
+        });
+        $map[$key] = $items;
+    }
+    return $map;
+}
+
+function save_kesediaan_form_map(array $map): bool
+{
+    $forms = [];
+    foreach ($map as $key => $items) {
+        if (!is_string($key)) {
+            continue;
+        }
+
+        if (is_array($items) && isset($items['bidang'])) {
+            $items = [$items];
+        }
+        if (!is_array($items)) {
+            continue;
+        }
+
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $bidang = trim((string)($item['bidang'] ?? ''));
+            $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+            $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+            $hubungan = normalize_kesediaan_hubungan((string)($item['hubungan'] ?? ''));
+            $namaPihak = normalize_username((string)($item['nama_pihak'] ?? ''));
+            $status = normalize_kesediaan_status((string)($item['status_kesediaan'] ?? ''));
+            $alasan = normalize_kesediaan_alasan((string)($item['alasan'] ?? ''));
+            $filePath = trim((string)($item['file_path'] ?? ''));
+            if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '' || $hubungan === '' || $status === '' || $filePath === '') {
+                continue;
+            }
+
+            $forms[] = [
+                'key' => $key,
+                'form_id' => trim((string)($item['form_id'] ?? '')),
+                'bidang' => $bidang,
+                'kandidat_nama' => $kandidatNama,
+                'kandidat_cabang' => $kandidatCabang,
+                'hubungan' => $hubungan,
+                'nama_pihak' => $namaPihak,
+                'status_kesediaan' => $status,
+                'alasan' => $alasan,
+                'file_path' => $filePath,
+                'file_name_original' => trim((string)($item['file_name_original'] ?? '')),
+                'file_mime' => trim((string)($item['file_mime'] ?? '')),
+                'file_size' => (int)($item['file_size'] ?? 0),
+                'interviewer_login_username' => normalize_login_username((string)($item['interviewer_login_username'] ?? '')),
+                'interviewer_nama_lengkap' => normalize_username((string)($item['interviewer_nama_lengkap'] ?? '')),
+                'updated_at' => trim((string)($item['updated_at'] ?? '')),
+                'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+            ];
+        }
+    }
+
+    usort($forms, static function (array $a, array $b): int {
+        $left = (string)($a['bidang'] ?? '') . '|' . (string)($a['kandidat_nama'] ?? '') . '|' . (string)($a['kandidat_cabang'] ?? '');
+        $right = (string)($b['bidang'] ?? '') . '|' . (string)($b['kandidat_nama'] ?? '') . '|' . (string)($b['kandidat_cabang'] ?? '');
+        return strnatcasecmp($left, $right);
+    });
+
+    return write_json_file_atomic(kesediaan_form_file_path(), ['forms' => $forms]);
+}
+
+function save_kesediaan_form_submission(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $hubungan,
+    string $namaPihak,
+    string $statusKesediaan,
+    string $alasan,
+    array $uploadedFile,
+    string $interviewerLoginUsername,
+    string $interviewerNamaLengkap,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $hubungan = normalize_kesediaan_hubungan($hubungan);
+    $namaPihak = normalize_username($namaPihak);
+    $statusKesediaan = normalize_kesediaan_status($statusKesediaan);
+    $alasan = normalize_kesediaan_alasan($alasan);
+    $interviewerLoginUsername = normalize_login_username($interviewerLoginUsername);
+    $interviewerNamaLengkap = normalize_username($interviewerNamaLengkap);
+    $updatedBy = normalize_username($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk form kesediaan.'];
+    }
+    if ($hubungan === '') {
+        return ['ok' => false, 'message' => 'Pihak yang menyatakan kesediaan wajib dipilih.'];
+    }
+    if ($hubungan === 'Diri Sendiri (Kandidat)') {
+        $namaPihak = $kandidatNama;
+    }
+    if ($namaPihak === '') {
+        return ['ok' => false, 'message' => 'Nama lengkap pihak yang menyatakan kesediaan wajib diisi.'];
+    }
+    if ($statusKesediaan === '') {
+        return ['ok' => false, 'message' => 'Status kesediaan wajib dipilih.'];
+    }
+
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_kesediaan_form_map();
+    if (!isset($map[$key]) || !is_array($map[$key])) {
+        $map[$key] = [];
+    }
+    if (kesediaan_is_single_submit_hubungan($hubungan)) {
+        foreach ((array)$map[$key] as $existingItem) {
+            if (!is_array($existingItem)) {
+                continue;
+            }
+            $existingHubungan = normalize_kesediaan_hubungan((string)($existingItem['hubungan'] ?? ''));
+            if ($existingHubungan !== '' && hash_equals($existingHubungan, $hubungan)) {
+                return ['ok' => false, 'message' => 'Pihak "' . $hubungan . '" sudah pernah mengisi form untuk kandidat ini.'];
+            }
+        }
+    }
+
+    $uploadResult = save_kesediaan_uploaded_file($uploadedFile);
+    if (!($uploadResult['ok'] ?? false)) {
+        return ['ok' => false, 'message' => (string)($uploadResult['message'] ?? 'Upload dokumen gagal.')];
+    }
+
+    $map[$key][] = [
+        'key' => $key,
+        'form_id' => generate_id('kesediaan_'),
+        'bidang' => $bidang,
+        'kandidat_nama' => $kandidatNama,
+        'kandidat_cabang' => $kandidatCabang,
+        'hubungan' => $hubungan,
+        'nama_pihak' => $namaPihak,
+        'status_kesediaan' => $statusKesediaan,
+        'alasan' => $alasan,
+        'file_path' => (string)($uploadResult['stored_path'] ?? ''),
+        'file_name_original' => (string)($uploadResult['original_name'] ?? ''),
+        'file_mime' => (string)($uploadResult['mime_type'] ?? ''),
+        'file_size' => (int)($uploadResult['size'] ?? 0),
+        'interviewer_login_username' => $interviewerLoginUsername,
+        'interviewer_nama_lengkap' => $interviewerNamaLengkap,
+        'updated_at' => date('Y-m-d H:i:s', current_time()),
+        'updated_by' => $updatedBy,
+    ];
+
+    if (!save_kesediaan_form_map($map)) {
+        $newPath = kesediaan_uploaded_file_absolute_path((string)($uploadResult['stored_path'] ?? ''));
+        if ($newPath !== '' && is_file($newPath)) {
+            @unlink($newPath);
+        }
+        return ['ok' => false, 'message' => 'Gagal menyimpan data form kesediaan.'];
+    }
+
+    return ['ok' => true, 'message' => 'Form kesediaan berhasil disimpan.'];
+}
+
+function scorecard_trim_text(string $value, int $maxLength = 2000): string
+{
+    $value = str_replace(["\r\n", "\r"], "\n", $value);
+    $value = preg_replace("/[ \t]+/", ' ', $value);
+    $value = is_string($value) ? trim($value) : '';
+    if ($value === '') {
+        return '';
+    }
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $maxLength, 'UTF-8');
+    }
+    return substr($value, 0, $maxLength);
+}
+
+function scorecard_normalize_indicator_list($rawValue): array
+{
+    $items = [];
+    if (is_array($rawValue)) {
+        $items = $rawValue;
+    } elseif (is_string($rawValue) && trim($rawValue) !== '') {
+        $items = preg_split('/\r\n|\r|\n/', $rawValue) ?: [];
+    }
+
+    $result = [];
+    foreach ($items as $item) {
+        $text = scorecard_trim_text((string)$item, 300);
+        if ($text !== '') {
+            $result[] = $text;
+        }
+    }
+
+    return $result;
+}
+
+function scorecard_normalize_question_definition(array $question, int $index): ?array
+{
+    $id = strtoupper(trim((string)($question['id'] ?? 'Q' . ($index + 1))));
+    $label = scorecard_trim_text((string)($question['label'] ?? ''), 180);
+    if ($id === '' || $label === '') {
+        return null;
+    }
+
+    $minScore = max(1, (int)($question['min_score'] ?? 1));
+    $maxScore = max($minScore, (int)($question['max_score'] ?? 5));
+
+    return [
+        'id' => $id,
+        'label' => $label,
+        'low_indicator' => scorecard_normalize_indicator_list($question['low_indicator'] ?? []),
+        'high_indicator' => scorecard_normalize_indicator_list($question['high_indicator'] ?? []),
+        'min_score' => $minScore,
+        'max_score' => $maxScore,
+    ];
+}
+
+function scorecard_normalize_section_definition(array $section, int $index): ?array
+{
+    $id = strtoupper(trim((string)($section['id'] ?? chr(65 + $index))));
+    $title = scorecard_trim_text((string)($section['title'] ?? ''), 180);
+    if ($id === '' || $title === '') {
+        return null;
+    }
+
+    $weight = (float)($section['weight'] ?? 0);
+    if ($weight > 1) {
+        $weight /= 100;
+    }
+    if ($weight <= 0) {
+        return null;
+    }
+
+    $questions = [];
+    foreach ((array)($section['questions'] ?? []) as $questionIndex => $question) {
+        if (!is_array($question)) {
+            continue;
+        }
+        $normalizedQuestion = scorecard_normalize_question_definition($question, (int)$questionIndex);
+        if ($normalizedQuestion !== null) {
+            $questions[] = $normalizedQuestion;
+        }
+    }
+    if ($questions === []) {
+        return null;
+    }
+
+    return [
+        'id' => $id,
+        'title' => $title,
+        'focus' => scorecard_trim_text((string)($section['focus'] ?? ''), 400),
+        'weight' => round($weight, 4),
+        'note_label' => scorecard_trim_text((string)($section['note_label'] ?? ('Catatan Bagian ' . $id)), 120),
+        'questions' => $questions,
+    ];
+}
+
+function load_scorecard_template_data(): array
+{
+    $fallback = default_scorecard_templates_data();
+    $decoded = read_json_file(scorecard_template_file_path(), $fallback);
+    if (!is_array($decoded)) {
+        $decoded = $fallback;
+    }
+
+    $templates = [];
+    foreach ((array)($decoded['templates'] ?? []) as $templateIndex => $template) {
+        if (!is_array($template)) {
+            continue;
+        }
+
+        $templateKey = trim((string)($template['template_key'] ?? ''));
+        if ($templateKey === '') {
+            $templateKey = 'template_' . ($templateIndex + 1);
+        }
+        $templateKey = slugify_identifier($templateKey);
+        if ($templateKey === '') {
+            continue;
+        }
+
+        $title = scorecard_trim_text((string)($template['title'] ?? ''), 180);
+        if ($title === '') {
+            $title = 'Scorecard Wawancara';
+        }
+
+        $bidangTitles = [];
+        foreach ((array)($template['bidang_titles'] ?? []) as $bidangTitle) {
+            $text = scorecard_trim_text((string)$bidangTitle, 180);
+            if ($text !== '') {
+                $bidangTitles[] = $text;
+            }
+        }
+
+        $sections = [];
+        foreach ((array)($template['sections'] ?? []) as $sectionIndex => $section) {
+            if (!is_array($section)) {
+                continue;
+            }
+            $normalizedSection = scorecard_normalize_section_definition($section, (int)$sectionIndex);
+            if ($normalizedSection !== null) {
+                $sections[] = $normalizedSection;
+            }
+        }
+        if ($sections === []) {
+            continue;
+        }
+
+        $decisionOptions = [];
+        foreach ((array)($template['decision_options'] ?? default_scorecard_decision_options()) as $decisionOption) {
+            $text = scorecard_trim_text((string)$decisionOption, 120);
+            if ($text !== '') {
+                $decisionOptions[] = $text;
+            }
+        }
+        if ($decisionOptions === []) {
+            $decisionOptions = default_scorecard_decision_options();
+        }
+
+        $finalRanges = [];
+        foreach ((array)($template['final_ranges'] ?? default_scorecard_final_ranges()) as $range) {
+            if (!is_array($range)) {
+                continue;
+            }
+            $min = (float)($range['min'] ?? 0);
+            $max = (float)($range['max'] ?? 0);
+            $label = scorecard_trim_text((string)($range['label'] ?? ''), 120);
+            if ($label === '' || $max < $min) {
+                continue;
+            }
+            $finalRanges[] = [
+                'min' => round($min, 2),
+                'max' => round($max, 2),
+                'label' => $label,
+            ];
+        }
+        if ($finalRanges === []) {
+            $finalRanges = default_scorecard_final_ranges();
+        }
+
+        usort($finalRanges, static function (array $a, array $b): int {
+            return ((float)($a['min'] ?? 0)) <=> ((float)($b['min'] ?? 0));
+        });
+
+        $templates[] = [
+            'template_key' => $templateKey,
+            'title' => $title,
+            'version' => max(1, (int)($template['version'] ?? 1)),
+            'bidang_titles' => $bidangTitles,
+            'decision_options' => array_values(array_unique($decisionOptions)),
+            'final_ranges' => $finalRanges,
+            'sections' => $sections,
+        ];
+    }
+
+    if ($templates === []) {
+        $templates = (array)($fallback['templates'] ?? []);
+    }
+
+    $defaultTemplateKey = slugify_identifier((string)($decoded['default_template_key'] ?? ''));
+    if ($defaultTemplateKey === '') {
+        $defaultTemplateKey = slugify_identifier((string)($fallback['default_template_key'] ?? ''));
+    }
+    if ($defaultTemplateKey === '') {
+        $defaultTemplateKey = (string)($templates[0]['template_key'] ?? '');
+    }
+
+    return [
+        'default_template_key' => $defaultTemplateKey,
+        'templates' => $templates,
+    ];
+}
+
+function scorecard_bidang_lookup_keys(string $bidang): array
+{
+    $bidang = trim($bidang);
+    if ($bidang === '') {
+        return [];
+    }
+
+    $keys = [];
+    $keys[] = normalize_header_key($bidang);
+    $parts = bidang_title_parts($bidang);
+    $mainTitle = trim((string)($parts['main'] ?? ''));
+    if ($mainTitle !== '') {
+        $keys[] = normalize_header_key($mainTitle);
+    }
+    if (is_ketua_pengurus_lokal_bidang($bidang)) {
+        $keys[] = normalize_header_key('Ketua Pengurus Lokal');
+    }
+
+    $keys = array_values(array_filter(array_unique($keys), static fn($item): bool => is_string($item) && $item !== ''));
+    return $keys;
+}
+
+function scorecard_template_matches_bidang(array $template, string $bidang): bool
+{
+    $lookupKeys = scorecard_bidang_lookup_keys($bidang);
+    if ($lookupKeys === []) {
+        return false;
+    }
+
+    foreach ((array)($template['bidang_titles'] ?? []) as $bidangTitle) {
+        $templateKey = normalize_header_key((string)$bidangTitle);
+        if ($templateKey !== '' && in_array($templateKey, $lookupKeys, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function find_scorecard_template_for_bidang(string $bidang): ?array
+{
+    $data = load_scorecard_template_data();
+    $templates = (array)($data['templates'] ?? []);
+    foreach ($templates as $template) {
+        if (!is_array($template)) {
+            continue;
+        }
+        if (scorecard_template_matches_bidang($template, $bidang)) {
+            return $template;
+        }
+    }
+
+    $defaultKey = trim((string)($data['default_template_key'] ?? ''));
+    if ($defaultKey !== '') {
+        foreach ($templates as $template) {
+            if (!is_array($template)) {
+                continue;
+            }
+            if (hash_equals((string)($template['template_key'] ?? ''), $defaultKey)) {
+                return $template;
+            }
+        }
+    }
+
+    return isset($templates[0]) && is_array($templates[0]) ? $templates[0] : null;
+}
+
+function scorecard_recommendation_label(array $template, float $finalScore): string
+{
+    foreach ((array)($template['final_ranges'] ?? []) as $range) {
+        if (!is_array($range)) {
+            continue;
+        }
+        $min = (float)($range['min'] ?? 0);
+        $max = (float)($range['max'] ?? 0);
+        if ($finalScore + 0.00001 >= $min && $finalScore - 0.00001 <= $max) {
+            return trim((string)($range['label'] ?? ''));
+        }
+    }
+    return '';
+}
+
+function scorecard_calculate_results(array $template, array $answers): array
+{
+    $sectionResults = [];
+    $finalScoreRaw = 0.0;
+
+    foreach ((array)($template['sections'] ?? []) as $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+
+        $sectionId = trim((string)($section['id'] ?? ''));
+        if ($sectionId === '') {
+            continue;
+        }
+
+        $questionCount = 0;
+        $answeredCount = 0;
+        $sectionTotal = 0.0;
+        foreach ((array)($section['questions'] ?? []) as $question) {
+            if (!is_array($question)) {
+                continue;
+            }
+            $questionId = trim((string)($question['id'] ?? ''));
+            if ($questionId === '') {
+                continue;
+            }
+            $questionCount++;
+            if (!array_key_exists($questionId, $answers)) {
+                continue;
+            }
+            $score = (int)$answers[$questionId];
+            $sectionTotal += $score;
+            $answeredCount++;
+        }
+
+        $sectionAverage = $questionCount > 0 ? ($sectionTotal / $questionCount) : 0.0;
+        $sectionWeight = (float)($section['weight'] ?? 0);
+        $weightedScore = $sectionAverage * $sectionWeight;
+        $finalScoreRaw += $weightedScore;
+
+        $sectionResults[$sectionId] = [
+            'question_count' => $questionCount,
+            'answered_count' => $answeredCount,
+            'total' => round($sectionTotal, 2),
+            'average' => round($sectionAverage, 2),
+            'weight' => round($sectionWeight, 4),
+            'weighted_score' => round($weightedScore, 2),
+        ];
+    }
+
+    $finalScore = round($finalScoreRaw, 2);
+
+    return [
+        'section_results' => $sectionResults,
+        'final_score' => $finalScore,
+        'auto_recommendation' => scorecard_recommendation_label($template, $finalScore),
+    ];
+}
+
+function load_scorecard_submission_data(): array
+{
+    $empty = ['submissions' => []];
+    $decoded = read_json_file(scorecard_submission_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['submissions']) || !is_array($decoded['submissions'])) {
+        return $empty;
+    }
+
+    $normalized = [];
+    foreach ($decoded['submissions'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+        }
+
+        $answers = [];
+        foreach ((array)($item['answers'] ?? []) as $questionId => $score) {
+            $questionId = strtoupper(trim((string)$questionId));
+            if ($questionId === '') {
+                continue;
+            }
+            $answers[$questionId] = (int)$score;
+        }
+
+        $sectionNotes = [];
+        foreach ((array)($item['section_notes'] ?? []) as $sectionId => $note) {
+            $sectionId = strtoupper(trim((string)$sectionId));
+            if ($sectionId === '') {
+                continue;
+            }
+            $sectionNotes[$sectionId] = scorecard_trim_text((string)$note, 2000);
+        }
+
+        $sectionResults = [];
+        foreach ((array)($item['section_results'] ?? []) as $sectionId => $resultItem) {
+            $sectionId = strtoupper(trim((string)$sectionId));
+            if ($sectionId === '' || !is_array($resultItem)) {
+                continue;
+            }
+            $sectionResults[$sectionId] = [
+                'question_count' => max(0, (int)($resultItem['question_count'] ?? 0)),
+                'answered_count' => max(0, (int)($resultItem['answered_count'] ?? 0)),
+                'total' => round((float)($resultItem['total'] ?? 0), 2),
+                'average' => round((float)($resultItem['average'] ?? 0), 2),
+                'weight' => round((float)($resultItem['weight'] ?? 0), 4),
+                'weighted_score' => round((float)($resultItem['weighted_score'] ?? 0), 2),
+            ];
+        }
+
+        $normalized[] = [
+            'key' => $key,
+            'submission_id' => trim((string)($item['submission_id'] ?? '')),
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'template_key' => trim((string)($item['template_key'] ?? '')),
+            'template_title' => scorecard_trim_text((string)($item['template_title'] ?? ''), 180),
+            'template_version' => max(1, (int)($item['template_version'] ?? 1)),
+            'interview_date' => trim((string)($item['interview_date'] ?? '')),
+            'location' => scorecard_trim_text((string)($item['location'] ?? ''), 180),
+            'answers' => $answers,
+            'section_notes' => $sectionNotes,
+            'section_results' => $sectionResults,
+            'final_score' => round((float)($item['final_score'] ?? 0), 2),
+            'auto_recommendation' => scorecard_trim_text((string)($item['auto_recommendation'] ?? ''), 120),
+            'interviewer_decision' => scorecard_trim_text((string)($item['interviewer_decision'] ?? ''), 120),
+            'decision_note' => scorecard_trim_text((string)($item['decision_note'] ?? ''), 2000),
+            'is_submitted' => !empty($item['is_submitted']),
+            'submitted_at' => trim((string)($item['submitted_at'] ?? '')),
+            'submitted_by' => normalize_username((string)($item['submitted_by'] ?? '')),
+            'submitted_by_login_username' => normalize_login_username((string)($item['submitted_by_login_username'] ?? '')),
+            'submitted_by_name' => normalize_username((string)($item['submitted_by_name'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    return ['submissions' => $normalized];
+}
+
+function load_scorecard_submission_map(): array
+{
+    $data = load_scorecard_submission_data();
+    $map = [];
+    foreach ((array)($data['submissions'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        $map[$key] = $item;
+    }
+    return $map;
+}
+
+function save_scorecard_submission_map(array $map): bool
+{
+    $submissions = [];
+    foreach ($map as $key => $item) {
+        if (!is_string($key) || !is_array($item)) {
+            continue;
+        }
+
+        $bidang = trim((string)($item['bidang'] ?? ''));
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+            continue;
+        }
+
+        $submissions[] = [
+            'key' => $key,
+            'submission_id' => trim((string)($item['submission_id'] ?? '')),
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'template_key' => trim((string)($item['template_key'] ?? '')),
+            'template_title' => scorecard_trim_text((string)($item['template_title'] ?? ''), 180),
+            'template_version' => max(1, (int)($item['template_version'] ?? 1)),
+            'interview_date' => trim((string)($item['interview_date'] ?? '')),
+            'location' => scorecard_trim_text((string)($item['location'] ?? ''), 180),
+            'answers' => (array)($item['answers'] ?? []),
+            'section_notes' => (array)($item['section_notes'] ?? []),
+            'section_results' => (array)($item['section_results'] ?? []),
+            'final_score' => round((float)($item['final_score'] ?? 0), 2),
+            'auto_recommendation' => scorecard_trim_text((string)($item['auto_recommendation'] ?? ''), 120),
+            'interviewer_decision' => scorecard_trim_text((string)($item['interviewer_decision'] ?? ''), 120),
+            'decision_note' => scorecard_trim_text((string)($item['decision_note'] ?? ''), 2000),
+            'is_submitted' => !empty($item['is_submitted']),
+            'submitted_at' => trim((string)($item['submitted_at'] ?? '')),
+            'submitted_by' => normalize_username((string)($item['submitted_by'] ?? '')),
+            'submitted_by_login_username' => normalize_login_username((string)($item['submitted_by_login_username'] ?? '')),
+            'submitted_by_name' => normalize_username((string)($item['submitted_by_name'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    usort($submissions, static function (array $a, array $b): int {
+        $left = (string)($a['bidang'] ?? '') . '|' . (string)($a['kandidat_nama'] ?? '') . '|' . (string)($a['kandidat_cabang'] ?? '');
+        $right = (string)($b['bidang'] ?? '') . '|' . (string)($b['kandidat_nama'] ?? '') . '|' . (string)($b['kandidat_cabang'] ?? '');
+        return strnatcasecmp($left, $right);
+    });
+
+    return write_json_file_atomic(scorecard_submission_file_path(), ['submissions' => $submissions]);
+}
+
+function save_scorecard_submission(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $interviewDate,
+    string $location,
+    array $rawAnswers,
+    array $rawSectionNotes,
+    string $interviewerDecision,
+    string $decisionNote,
+    string $submittedByLoginUsername,
+    string $submittedByName,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $interviewDate = trim($interviewDate);
+    $location = scorecard_trim_text($location, 180);
+    $interviewerDecision = scorecard_trim_text($interviewerDecision, 120);
+    $decisionNote = scorecard_trim_text($decisionNote, 2000);
+    $submittedByLoginUsername = normalize_login_username($submittedByLoginUsername);
+    $submittedByName = normalize_username($submittedByName);
+    $updatedBy = normalize_username($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk score card.'];
+    }
+
+    $template = find_scorecard_template_for_bidang($bidang);
+    if ($template === null) {
+        return ['ok' => false, 'message' => 'Template score card untuk bidang ini belum tersedia.'];
+    }
+
+    $dateObject = DateTime::createFromFormat('Y-m-d', $interviewDate);
+    $dateErrors = DateTime::getLastErrors();
+    $hasDateError = is_array($dateErrors) && ((int)($dateErrors['warning_count'] ?? 0) > 0 || (int)($dateErrors['error_count'] ?? 0) > 0);
+    if ($interviewDate === '' || !($dateObject instanceof DateTime) || $hasDateError || $dateObject->format('Y-m-d') !== $interviewDate) {
+        return ['ok' => false, 'message' => 'Tanggal wawancara wajib diisi dengan format yang valid.'];
+    }
+
+    if ($location === '') {
+        return ['ok' => false, 'message' => 'Lokasi wawancara wajib diisi.'];
+    }
+
+    $answers = [];
+    foreach ((array)($template['sections'] ?? []) as $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+        foreach ((array)($section['questions'] ?? []) as $question) {
+            if (!is_array($question)) {
+                continue;
+            }
+            $questionId = trim((string)($question['id'] ?? ''));
+            if ($questionId === '') {
+                continue;
+            }
+
+            $rawScore = $rawAnswers[$questionId] ?? null;
+            $scoreText = trim((string)$rawScore);
+            if ($scoreText === '' || !preg_match('/^\d+$/', $scoreText)) {
+                return ['ok' => false, 'message' => 'Semua skor pertanyaan wajib diisi.'];
+            }
+
+            $score = (int)$scoreText;
+            $minScore = max(1, (int)($question['min_score'] ?? 1));
+            $maxScore = max($minScore, (int)($question['max_score'] ?? 5));
+            if ($score < $minScore || $score > $maxScore) {
+                return ['ok' => false, 'message' => 'Nilai score card harus berada pada rentang yang diizinkan.'];
+            }
+
+            $answers[$questionId] = $score;
+        }
+    }
+
+    $sectionNotes = [];
+    foreach ((array)($template['sections'] ?? []) as $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+        $sectionId = trim((string)($section['id'] ?? ''));
+        if ($sectionId === '') {
+            continue;
+        }
+        $sectionNotes[$sectionId] = scorecard_trim_text((string)($rawSectionNotes[$sectionId] ?? ''), 2000);
+    }
+
+    $decisionOptions = (array)($template['decision_options'] ?? []);
+    if ($interviewerDecision === '' || !in_array($interviewerDecision, $decisionOptions, true)) {
+        return ['ok' => false, 'message' => 'Keputusan pewawancara wajib dipilih.'];
+    }
+    if (stripos($interviewerDecision, 'catatan') !== false && $decisionNote === '') {
+        return ['ok' => false, 'message' => 'Catatan keputusan wajib diisi untuk keputusan dengan catatan.'];
+    }
+
+    $calculation = scorecard_calculate_results($template, $answers);
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_scorecard_submission_map();
+    $existing = (array)($map[$key] ?? []);
+
+    if ($existing !== [] && !empty($existing['is_submitted'])) {
+        return ['ok' => false, 'message' => 'Score card sudah disubmit dan tidak dapat diubah lagi.'];
+    }
+
+    $map[$key] = [
+        'key' => $key,
+        'submission_id' => trim((string)($existing['submission_id'] ?? '')) !== '' ? trim((string)$existing['submission_id']) : generate_id('scorecard_'),
+        'bidang' => $bidang,
+        'kandidat_nama' => $kandidatNama,
+        'kandidat_cabang' => $kandidatCabang,
+        'template_key' => trim((string)($template['template_key'] ?? '')),
+        'template_title' => trim((string)($template['title'] ?? 'Scorecard Wawancara')),
+        'template_version' => max(1, (int)($template['version'] ?? 1)),
+        'interview_date' => $interviewDate,
+        'location' => $location,
+        'answers' => $answers,
+        'section_notes' => $sectionNotes,
+        'section_results' => (array)($calculation['section_results'] ?? []),
+        'final_score' => round((float)($calculation['final_score'] ?? 0), 2),
+        'auto_recommendation' => scorecard_trim_text((string)($calculation['auto_recommendation'] ?? ''), 120),
+        'interviewer_decision' => $interviewerDecision,
+        'decision_note' => $decisionNote,
+        'is_submitted' => !empty($existing['is_submitted']),
+        'submitted_at' => trim((string)($existing['submitted_at'] ?? '')),
+        'submitted_by' => normalize_username((string)($existing['submitted_by'] ?? '')),
+        'submitted_by_login_username' => trim((string)($existing['submitted_by_login_username'] ?? '')) !== ''
+            ? normalize_login_username((string)$existing['submitted_by_login_username'])
+            : $submittedByLoginUsername,
+        'submitted_by_name' => trim((string)($existing['submitted_by_name'] ?? '')) !== ''
+            ? normalize_username((string)$existing['submitted_by_name'])
+            : $submittedByName,
+        'updated_at' => date('Y-m-d H:i:s', current_time()),
+        'updated_by' => $updatedBy,
+    ];
+
+    if (!save_scorecard_submission_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal menyimpan score card.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => $existing !== [] ? 'Score card berhasil diperbarui.' : 'Score card berhasil disimpan.',
+        'submission' => $map[$key],
+    ];
+}
+
+function submit_scorecard_submission(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $submittedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $submittedBy = normalize_username($submittedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk submit score card.'];
+    }
+
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_scorecard_submission_map();
+    $existing = (array)($map[$key] ?? []);
+    if ($existing === []) {
+        return ['ok' => false, 'message' => 'Score card belum diisi.'];
+    }
+    if (!empty($existing['is_submitted'])) {
+        return ['ok' => false, 'message' => 'Score card sudah disubmit sebelumnya.'];
+    }
+
+    $existing['is_submitted'] = true;
+    $existing['submitted_at'] = date('Y-m-d H:i:s', current_time());
+    $existing['submitted_by'] = $submittedBy;
+    $existing['updated_at'] = (string)$existing['submitted_at'];
+    $existing['updated_by'] = $submittedBy;
+    $map[$key] = $existing;
+
+    if (!save_scorecard_submission_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal submit score card.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => 'Score card berhasil disubmit dan tidak dapat diubah lagi.',
+        'submission' => $map[$key],
+    ];
+}
+
+function cancel_submitted_scorecard_submission(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $updatedBy = normalize_username($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk batal submit score card.'];
+    }
+
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_scorecard_submission_map();
+    $existing = (array)($map[$key] ?? []);
+    if ($existing === []) {
+        return ['ok' => false, 'message' => 'Score card kandidat belum tersedia.'];
+    }
+    if (empty($existing['is_submitted'])) {
+        return ['ok' => false, 'message' => 'Score card kandidat belum disubmit.'];
+    }
+
+    $existing['is_submitted'] = false;
+    $existing['submitted_at'] = '';
+    $existing['submitted_by'] = '';
+    $existing['submitted_by_login_username'] = '';
+    $existing['submitted_by_name'] = '';
+    $existing['updated_at'] = date('Y-m-d H:i:s', current_time());
+    $existing['updated_by'] = $updatedBy;
+    $map[$key] = $existing;
+
+    if (!save_scorecard_submission_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal membatalkan submit score card.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => 'Submit score card berhasil dibatalkan. Score card dapat diedit lagi.',
+        'submission' => $map[$key],
+    ];
+}
+
+function scorecard_template_client_payload(array $template): array
+{
+    return [
+        'template_key' => (string)($template['template_key'] ?? ''),
+        'title' => (string)($template['title'] ?? 'Scorecard Wawancara'),
+        'version' => (int)($template['version'] ?? 1),
+        'sections' => (array)($template['sections'] ?? []),
+        'decision_options' => array_values((array)($template['decision_options'] ?? [])),
+        'final_ranges' => array_values((array)($template['final_ranges'] ?? [])),
+    ];
+}
+
+function scorecard_submission_client_payload(array $submission): array
+{
+    return [
+        'submission_id' => (string)($submission['submission_id'] ?? ''),
+        'template_key' => (string)($submission['template_key'] ?? ''),
+        'template_title' => (string)($submission['template_title'] ?? ''),
+        'template_version' => (int)($submission['template_version'] ?? 1),
+        'interview_date' => (string)($submission['interview_date'] ?? ''),
+        'location' => (string)($submission['location'] ?? ''),
+        'answers' => (array)($submission['answers'] ?? []),
+        'section_notes' => (array)($submission['section_notes'] ?? []),
+        'section_results' => (array)($submission['section_results'] ?? []),
+        'final_score' => round((float)($submission['final_score'] ?? 0), 2),
+        'auto_recommendation' => (string)($submission['auto_recommendation'] ?? ''),
+        'interviewer_decision' => (string)($submission['interviewer_decision'] ?? ''),
+        'decision_note' => (string)($submission['decision_note'] ?? ''),
+        'is_submitted' => !empty($submission['is_submitted']),
+        'submitted_at' => (string)($submission['submitted_at'] ?? ''),
+        'submitted_by_name' => (string)($submission['submitted_by_name'] ?? ''),
+        'updated_at' => (string)($submission['updated_at'] ?? ''),
+    ];
+}
+
+function is_candidate_in_top10_summary(array $bidangSummary, string $bidang, string $kandidatNama, string $kandidatCabang): bool
+{
+    if (!isset($bidangSummary[$bidang]) || !is_array($bidangSummary[$bidang])) {
+        return false;
+    }
+
+    $topCandidates = (array)($bidangSummary[$bidang]['top_candidates'] ?? []);
+    $targetName = normalize_header_key($kandidatNama);
+    $targetCabang = normalize_header_key($kandidatCabang);
+    foreach ($topCandidates as $candidate) {
+        if (!is_array($candidate)) {
+            continue;
+        }
+
+        $name = normalize_header_key((string)($candidate['nama'] ?? ''));
+        $cabang = normalize_header_key((string)($candidate['cabang'] ?? ''));
+        if ($name === $targetName && $cabang === $targetCabang) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function toggle_candidate_flag_status(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $flagType,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $flagType = trim(strtolower($flagType));
+    $updatedBy = trim($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk proses flagging.'];
+    }
+    if (!in_array($flagType, ['lanjut', 'screening'], true)) {
+        return ['ok' => false, 'message' => 'Jenis flagging tidak valid.'];
+    }
+
+    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $map = load_flagging_map();
+    $record = (array)($map[$key] ?? []);
+    $lanjutProses = !empty($record['lanjut_proses']);
+    $lolosScreening = !empty($record['lolos_screening']) && $lanjutProses;
+
+    if ($flagType === 'lanjut') {
+        $lanjutProses = !$lanjutProses;
+        if (!$lanjutProses) {
+            $lolosScreening = false;
+        }
+    } else {
+        if (!$lanjutProses) {
+            return ['ok' => false, 'message' => 'Kandidat harus ditandai lanjut proses terlebih dahulu.'];
+        }
+        $lolosScreening = !$lolosScreening;
+    }
+
+    if (!$lanjutProses && !$lolosScreening) {
+        unset($map[$key]);
+    } else {
+        $map[$key] = [
+            'key' => $key,
+            'bidang' => $bidang,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'lanjut_proses' => $lanjutProses,
+            'lolos_screening' => $lolosScreening,
+            'updated_at' => date('Y-m-d H:i:s', current_time()),
+            'updated_by' => $updatedBy,
+        ];
+    }
+
+    if (!save_flagging_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal menyimpan data flagging.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => 'Status flagging berhasil diperbarui.',
+        'lanjut_proses' => $lanjutProses,
+        'lolos_screening' => $lolosScreening,
+    ];
+}
+
+function mark_candidate_lanjut_proses(
+    string $bidang,
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $updatedBy
+): array {
+    $bidang = trim($bidang);
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $updatedBy = trim($updatedBy);
+
+    if ($bidang === '' || $kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk lanjut proses.'];
+    }
+    $result = toggle_candidate_flag_status($bidang, $kandidatNama, $kandidatCabang, 'lanjut', $updatedBy);
+    if (!($result['ok'] ?? false)) {
+        return ['ok' => false, 'message' => (string)($result['message'] ?? 'Gagal menyimpan status lanjut proses.')];
+    }
+
+    $isLanjut = !empty($result['lanjut_proses']);
+    $result['message'] = $isLanjut
+        ? 'Kandidat berhasil ditandai lanjut proses.'
+        : 'Status lanjut proses kandidat berhasil dibatalkan.';
+    return $result;
+}
+
+function csrf_token(): string
+{
+    $token = $_SESSION['csrf_token'] ?? '';
+    if (!is_string($token) || strlen($token) < 32) {
+        $token = random_hex(32);
+        $_SESSION['csrf_token'] = $token;
+    }
+    return $token;
+}
+
+function is_valid_csrf_token(string $token): bool
+{
+    if ($token === '') {
+        return false;
+    }
+    $sessionToken = (string)($_SESSION['csrf_token'] ?? '');
+    if ($sessionToken === '') {
+        return false;
+    }
+    return hash_equals($sessionToken, $token);
+}
+
+function current_time(): int
+{
+    $override = getenv('MAJELIS_NOW_TS');
+    if (is_string($override) && ctype_digit($override)) {
+        return (int)$override;
+    }
+    return time();
+}
+
+function auth_fingerprint(): string
+{
+    $userAgent = trim((string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
+    return hash('sha256', $userAgent);
+}
+
+function clear_auth_session(): void
+{
+    $_SESSION = [];
+
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_unset();
+        session_destroy();
+    }
+
+    start_secure_session();
+    session_regenerate_id(true);
+}
+
+function current_authenticated_user(array $users): ?array
+{
+    if (!is_logged_in()) {
+        return null;
+    }
+
+    $sessionNamaLengkap = normalize_username((string)($_SESSION['username'] ?? ''));
+    $sessionLoginUsername = normalize_login_username((string)($_SESSION['login_username'] ?? ''));
+    $sessionCabang = trim((string)($_SESSION['asal_cabang'] ?? ''));
+    $sessionFingerprint = (string)($_SESSION['fingerprint'] ?? '');
+    $sessionAuthKey = trim((string)($_SESSION['user_auth_key'] ?? ''));
+    if (($sessionNamaLengkap === '' && $sessionLoginUsername === '') || $sessionCabang === '' || $sessionFingerprint === '') {
+        return null;
+    }
+    if (!hash_equals($sessionFingerprint, auth_fingerprint())) {
+        return null;
+    }
+
+    foreach ($users as $user) {
+        if (!is_array($user)) {
+            continue;
+        }
+
+        $namaLengkap = normalize_username((string)($user['nama_lengkap'] ?? $user['username'] ?? ''));
+        $loginUsername = normalize_login_username((string)($user['username'] ?? ''));
+        if ($loginUsername === '') {
+            $loginUsername = short_username_from_fullname($namaLengkap);
+        }
+        $cabang = trim((string)($user['asal_cabang'] ?? ''));
+        $password = normalize_password((string)($user['password'] ?? ''));
+        if ($namaLengkap === '' || $cabang === '') {
+            continue;
+        }
+
+        $matchedByLogin = $sessionLoginUsername !== '' && hash_equals($sessionLoginUsername, $loginUsername);
+        $matchedByNama = hash_equals($sessionNamaLengkap, $namaLengkap);
+        $matchedByAuthKey = false;
+        if ($sessionAuthKey !== '' && $password !== '') {
+            $matchedByAuthKey = hash_equals($sessionAuthKey, hash('sha256', $password));
+        }
+        $matchedSessionIdentity = false;
+        if ($sessionLoginUsername !== '' && $sessionNamaLengkap !== '') {
+            // Username login boleh duplikat, jadi wajib cocokkan juga nama lengkap dari sesi.
+            $matchedSessionIdentity = $matchedByLogin && $matchedByNama;
+        } elseif ($sessionLoginUsername !== '') {
+            $matchedSessionIdentity = $matchedByLogin;
+        } elseif ($sessionNamaLengkap !== '') {
+            $matchedSessionIdentity = $matchedByNama;
+        }
+
+        if ($sessionAuthKey !== '' && !$matchedByAuthKey) {
+            continue;
+        }
+
+        if ($matchedSessionIdentity && hash_equals($sessionCabang, $cabang)) {
+            return [
+                'username' => $namaLengkap,
+                'login_username' => $loginUsername,
+                'asal_cabang' => $cabang,
+                'role' => normalize_role((string)($user['role'] ?? 'user')),
+            ];
+        }
+    }
+
+    return null;
+}
+
+function login_rate_user_key(string $username, string $ipAddress): string
+{
+    return hash('sha256', strtolower(trim($username)) . '|' . trim($ipAddress));
+}
+
+function login_rate_ip_key(string $ipAddress): string
+{
+    return hash('sha256', 'ip|' . trim($ipAddress));
+}
+
+function normalize_login_rate_records(array $records, int $now): array
+{
+    $normalized = [];
+    foreach ($records as $key => $record) {
+        if (!is_string($key) || !is_array($record)) {
+            continue;
+        }
+
+        $attempts = [];
+        foreach ((array)($record['attempts'] ?? []) as $ts) {
+            $ts = (int)$ts;
+            if ($ts > 0 && ($now - $ts) <= LOGIN_WINDOW_SECONDS) {
+                $attempts[] = $ts;
+            }
+        }
+
+        $blockedUntil = max(0, (int)($record['blocked_until'] ?? 0));
+        if ($blockedUntil > 0 && $blockedUntil <= $now) {
+            $blockedUntil = 0;
+        }
+
+        if ($attempts !== [] || $blockedUntil > 0) {
+            $normalized[$key] = [
+                'attempts' => $attempts,
+                'blocked_until' => $blockedUntil,
+            ];
+        }
+    }
+
+    return $normalized;
+}
+
+function login_rate_status(string $username, string $ipAddress): array
+{
+    $now = current_time();
+    $data = load_login_rate_data();
+    $records = normalize_login_rate_records((array)($data['records'] ?? []), $now);
+    $data['records'] = $records;
+    save_login_rate_data($data);
+
+    $keys = [
+        login_rate_user_key($username, $ipAddress),
+        login_rate_ip_key($ipAddress),
+    ];
+    $blockedUntil = 0;
+    foreach ($keys as $key) {
+        $record = (array)($records[$key] ?? []);
+        $candidateBlockedUntil = max(0, (int)($record['blocked_until'] ?? 0));
+        if ($candidateBlockedUntil > $blockedUntil) {
+            $blockedUntil = $candidateBlockedUntil;
+        }
+    }
+
+    if ($blockedUntil > $now) {
+        return [
+            'allowed' => false,
+            'retry_after_seconds' => $blockedUntil - $now,
+        ];
+    }
+
+    return [
+        'allowed' => true,
+        'retry_after_seconds' => 0,
+    ];
+}
+
+function register_failed_login(string $username, string $ipAddress): void
+{
+    $now = current_time();
+    $data = load_login_rate_data();
+    $records = normalize_login_rate_records((array)($data['records'] ?? []), $now);
+    $targets = [
+        [login_rate_user_key($username, $ipAddress), LOGIN_MAX_ATTEMPTS],
+        [login_rate_ip_key($ipAddress), LOGIN_MAX_ATTEMPTS_PER_IP],
+    ];
+
+    foreach ($targets as [$key, $maxAttempts]) {
+        $record = (array)($records[$key] ?? ['attempts' => [], 'blocked_until' => 0]);
+        $attempts = [];
+        foreach ((array)($record['attempts'] ?? []) as $ts) {
+            $ts = (int)$ts;
+            if ($ts > 0 && ($now - $ts) <= LOGIN_WINDOW_SECONDS) {
+                $attempts[] = $ts;
+            }
+        }
+        $attempts[] = $now;
+
+        $blockedUntil = max(0, (int)($record['blocked_until'] ?? 0));
+        if (count($attempts) >= (int)$maxAttempts) {
+            $blockedUntil = $now + LOGIN_BLOCK_SECONDS;
+            $attempts = [];
+        }
+
+        $records[$key] = [
+            'attempts' => $attempts,
+            'blocked_until' => $blockedUntil,
+        ];
+    }
+
+    if (count($records) > 2000) {
+        $records = array_slice($records, -2000, null, true);
+    }
+
+    $data['records'] = $records;
+    save_login_rate_data($data);
+}
+
+function clear_login_rate_record(string $username, string $ipAddress): void
+{
+    $data = load_login_rate_data();
+    $records = (array)($data['records'] ?? []);
+    $changed = false;
+    foreach ([login_rate_user_key($username, $ipAddress), login_rate_ip_key($ipAddress)] as $key) {
+        if (isset($records[$key])) {
+            unset($records[$key]);
+            $changed = true;
+        }
+    }
+
+    if ($changed) {
+        $data['records'] = $records;
+        save_login_rate_data($data);
+    }
+}
+
+function write_locked_stream($handle, string $content): bool
+{
+    $length = strlen($content);
+    $writtenTotal = 0;
+    while ($writtenTotal < $length) {
+        $chunk = fwrite($handle, substr($content, $writtenTotal));
+        if ($chunk === false || $chunk === 0) {
+            return false;
+        }
+        $writtenTotal += $chunk;
+    }
+    return true;
+}
+
+function client_ip_address(): string
+{
+    $candidates = [
+        (string)($_SERVER['HTTP_CLIENT_IP'] ?? ''),
+        (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''),
+        (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+    ];
+
+    foreach ($candidates as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate === '') {
+            continue;
+        }
+
+        if (strpos($candidate, ',') !== false) {
+            $parts = explode(',', $candidate);
+            $candidate = trim((string)($parts[0] ?? ''));
+        }
+
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    return '-';
+}
+
+function append_vote_log(array $detail): void
+{
+    $path = vote_log_file_path();
+    $handle = @fopen($path, 'c+');
+    if ($handle === false) {
+        return;
+    }
+    if (!flock($handle, LOCK_EX)) {
+        fclose($handle);
+        return;
+    }
+
+    rewind($handle);
+    $raw = stream_get_contents($handle);
+    $decoded = is_string($raw) ? json_decode($raw, true) : null;
+    $data = (is_array($decoded) && isset($decoded['logs']) && is_array($decoded['logs']))
+        ? $decoded
+        : ['logs' => []];
+
+    $kandidat = (array)($detail['kandidat'] ?? []);
+    $userAgent = trim((string)($_SERVER['HTTP_USER_AGENT'] ?? '-'));
+    if ($userAgent === '') {
+        $userAgent = '-';
+    }
+    $userAgent = substr($userAgent, 0, 250);
+
+    $data['logs'][] = [
+        'log_id' => generate_id('log_'),
+        'event' => 'vote_saved',
+        'timestamp' => date('Y-m-d H:i:s', current_time()),
+        'vote_id' => (string)($detail['id'] ?? ''),
+        'username' => (string)($detail['username'] ?? ''),
+        'asal_cabang_user' => (string)($detail['asal_cabang_user'] ?? ''),
+        'bidang' => (string)($detail['bidang'] ?? ''),
+        'kandidat_nama' => (string)($kandidat['nama_lengkap'] ?? ''),
+        'kandidat_cabang' => (string)($kandidat['asal_cabang'] ?? ''),
+        'ip_address' => client_ip_address(),
+        'user_agent' => $userAgent,
+    ];
+
+    if (count($data['logs']) > 5000) {
+        $data['logs'] = array_slice($data['logs'], -5000);
+    }
+
+    $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if (!is_string($encoded)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        return;
+    }
+
+    rewind($handle);
+    ftruncate($handle, 0);
+    write_locked_stream($handle, $encoded . PHP_EOL);
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+function save_pemilihan_detail(array $detail): bool
+{
+    $path = pemilihan_file_path();
+    $handle = @fopen($path, 'c+');
+    if ($handle === false) {
+        return false;
+    }
+    if (!flock($handle, LOCK_EX)) {
+        fclose($handle);
+        return false;
+    }
+
+    rewind($handle);
+    $raw = stream_get_contents($handle);
+    $decoded = is_string($raw) ? json_decode($raw, true) : null;
+    $data = (is_array($decoded) && isset($decoded['pemilihan']) && is_array($decoded['pemilihan']))
+        ? $decoded
+        : ['pemilihan' => []];
+
+    $username = (string)($detail['username'] ?? '');
+    $asalCabangUser = trim((string)($detail['asal_cabang_user'] ?? ''));
+    $bidang = normalize_vote_bidang_title((string)($detail['bidang'] ?? ''), $asalCabangUser);
+    $detail['bidang'] = $bidang;
+    foreach (($data['pemilihan'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $itemUser = (string)($item['username'] ?? '');
+        $itemBidang = normalize_vote_bidang_title(
+            (string)($item['bidang'] ?? ''),
+            (string)($item['asal_cabang_user'] ?? '')
+        );
+        if ($itemUser === $username && $itemBidang === $bidang) {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+            return false;
+        }
+    }
+
+    $data['pemilihan'][] = $detail;
+
+    $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if (!is_string($encoded)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        return false;
+    }
+
+    rewind($handle);
+    ftruncate($handle, 0);
+    $saved = write_locked_stream($handle, $encoded . PHP_EOL);
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+
+    if ($saved) {
+        append_vote_log($detail);
+    }
+
+    return $saved;
+}
+
+function latest_pemilihan_for(string $username, string $bidang): ?array
+{
+    $data = load_pemilihan_data();
+    $items = $data['pemilihan'] ?? [];
+    if (!is_array($items)) {
+        return null;
+    }
+
+    for ($i = count($items) - 1; $i >= 0; $i--) {
+        $item = $items[$i];
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $itemUser = (string)($item['username'] ?? '');
+        $itemBidang = normalize_vote_bidang_title(
+            (string)($item['bidang'] ?? ''),
+            (string)($item['asal_cabang_user'] ?? '')
+        );
+        if ($itemUser === $username && $itemBidang === $bidang) {
+            return $item;
+        }
+    }
+
+    return null;
+}
+
+function user_voted_bidang_map(string $username): array
+{
+    $data = load_pemilihan_data();
+    $items = $data['pemilihan'] ?? [];
+    if (!is_array($items)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $itemUser = (string)($item['username'] ?? '');
+        $itemBidang = trim(normalize_vote_bidang_title(
+            (string)($item['bidang'] ?? ''),
+            (string)($item['asal_cabang_user'] ?? '')
+        ));
+        if ($itemUser === $username && $itemBidang !== '') {
+            $result[$itemBidang] = true;
+        }
+    }
+
+    return $result;
+}
+
+function user_vote_detail_map(string $username): array
+{
+    $data = load_pemilihan_data();
+    $items = $data['pemilihan'] ?? [];
+    if (!is_array($items)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $itemUser = (string)($item['username'] ?? '');
+        $itemBidang = trim(normalize_vote_bidang_title(
+            (string)($item['bidang'] ?? ''),
+            (string)($item['asal_cabang_user'] ?? '')
+        ));
+        if ($itemUser === $username && $itemBidang !== '') {
+            $item['bidang'] = $itemBidang;
+            $result[$itemBidang] = $item;
+        }
+    }
+
+    return $result;
+}
+
+$page = route_page();
+$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+$error = '';
+$electionClosed = is_election_closed();
+$usersForLogin = load_user_data();
+$loginSelectedUsername = substr(normalize_login_username((string)($_POST['username'] ?? '')), 0, 120);
+$csrfFormToken = csrf_token();
+$clientIp = client_ip_address();
+
+if ($page === '') {
+    redirect_to_page('login');
+}
+
+if ($page === 'logout') {
+    if ($method !== 'POST') {
+        http_response_code(405);
+        exit('405 - Method tidak diizinkan.');
+    }
+
+    $logoutToken = trim((string)($_POST['csrf_token'] ?? ''));
+    if (!is_valid_csrf_token($logoutToken)) {
+        http_response_code(400);
+        exit('400 - Permintaan tidak valid.');
+    }
+    clear_auth_session();
+    redirect_to_page('login');
+}
+
+if ($page === 'login' && $method === 'POST') {
+    $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+    $password = substr(normalize_password((string)($_POST['password'] ?? '')), 0, 255);
+
+    if (!is_valid_csrf_token($postedCsrfToken)) {
+        $error = 'Sesi tidak valid. Muat ulang halaman lalu coba login kembali.';
+    } else {
+        $rateStatus = login_rate_status($loginSelectedUsername, $clientIp);
+        if (!$rateStatus['allowed']) {
+            $retryMinutes = (int)ceil(((int)$rateStatus['retry_after_seconds']) / 60);
+            $retryMinutes = max(1, $retryMinutes);
+            $error = 'Terlalu banyak percobaan login. Coba lagi dalam ' . $retryMinutes . ' menit.';
+        } elseif ($loginSelectedUsername === '' || $password === '') {
+            $error = 'Silakan isi username dan password terlebih dahulu.';
+        } else {
+            $foundUser = find_user_for_login($usersForLogin, $loginSelectedUsername, $password);
+
+            if ($foundUser === null) {
+                register_failed_login($loginSelectedUsername, $clientIp);
+                $error = 'Username atau password salah.';
+            } else {
+                $foundRole = normalize_role((string)($foundUser['role'] ?? 'user'));
+
+                if ($electionClosed && $foundRole !== 'admin') {
+                    register_failed_login($loginSelectedUsername, $clientIp);
+                    $error = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
+                } else {
+                    clear_login_rate_record($loginSelectedUsername, $clientIp);
+                    session_regenerate_id(true);
+                    $_SESSION['logged_in'] = true;
+                    $_SESSION['username'] = normalize_username((string)($foundUser['nama_lengkap'] ?? $foundUser['username'] ?? ''));
+                    $_SESSION['login_username'] = normalize_login_username((string)($foundUser['username'] ?? ''));
+                    $_SESSION['asal_cabang'] = trim((string)$foundUser['asal_cabang']);
+                    $_SESSION['role'] = $foundRole;
+                    $_SESSION['user_auth_key'] = hash('sha256', normalize_password((string)($foundUser['password'] ?? '')));
+                    $_SESSION['fingerprint'] = auth_fingerprint();
+                    $_SESSION['csrf_token'] = random_hex(32);
+                    redirect_to_page('bidang');
+                }
+            }
+        }
+    }
+}
+
+if ($page === 'kesediaan_file') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        http_response_code(403);
+        exit('403 - Akses ditolak.');
+    }
+    if (!can_access_wawancara_role((string)$authUser['role'])) {
+        http_response_code(403);
+        exit('403 - Akses ditolak.');
+    }
+
+    $formPublicId = trim((string)($_GET['form_id'] ?? ''));
+    if ($formPublicId === '') {
+        http_response_code(400);
+        exit('400 - Permintaan tidak valid.');
+    }
+
+    $formRecord = find_kesediaan_form_by_public_id($formPublicId);
+    if ($formRecord === null) {
+        http_response_code(404);
+        exit('404 - File tidak ditemukan.');
+    }
+
+    $authRole = normalize_role((string)($authUser['role'] ?? 'user'));
+    if ($authRole === 'pewawancara') {
+        $currentLogin = normalize_login_username((string)($authUser['login_username'] ?? ''));
+        $formKey = trim((string)($formRecord['key'] ?? ''));
+        if ($formKey === '') {
+            $formKey = flagging_candidate_key(
+                (string)($formRecord['bidang'] ?? ''),
+                (string)($formRecord['kandidat_nama'] ?? ''),
+                (string)($formRecord['kandidat_cabang'] ?? '')
+            );
+        }
+
+        $assignmentMap = load_wawancara_assignment_map();
+        $assignmentRecord = (array)($assignmentMap[$formKey] ?? []);
+        $assignedLogin = normalize_login_username((string)($assignmentRecord['interviewer_login_username'] ?? ''));
+        if ($currentLogin === '' || $assignedLogin === '' || !hash_equals($assignedLogin, $currentLogin)) {
+            http_response_code(403);
+            exit('403 - Akses ditolak.');
+        }
+    }
+
+    $storedPath = trim((string)($formRecord['file_path'] ?? ''));
+    $absolutePath = kesediaan_uploaded_file_absolute_path($storedPath);
+    if ($absolutePath === '' || !is_file($absolutePath)) {
+        http_response_code(404);
+        exit('404 - File tidak ditemukan.');
+    }
+
+    $mimeType = strtolower(trim((string)($formRecord['file_mime'] ?? '')));
+    if ($mimeType === '') {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo !== false) {
+            $detected = finfo_file($finfo, $absolutePath);
+            finfo_close($finfo);
+            if (is_string($detected)) {
+                $mimeType = strtolower(trim($detected));
+            }
+        }
+    }
+    $originalName = trim((string)($formRecord['file_name_original'] ?? ''));
+    $originalExt = kesediaan_file_extension($originalName);
+    $storedExt = kesediaan_file_extension($storedPath);
+    if (($mimeType === '' || $mimeType === 'application/octet-stream') && ($originalExt === 'pdf' || $storedExt === 'pdf')) {
+        $mimeType = 'application/pdf';
+    }
+    if ($mimeType === '') {
+        $mimeType = 'application/octet-stream';
+    }
+
+    $fileSize = @filesize($absolutePath);
+    $downloadRequested = trim((string)($_GET['download'] ?? '')) === '1';
+    $isInlineAllowed = strpos($mimeType, 'image/') === 0 || $mimeType === 'application/pdf';
+    $disposition = (!$downloadRequested && $isInlineAllowed) ? 'inline' : 'attachment';
+    $fileName = sanitize_download_filename($originalName);
+    if ($fileName === 'dokumen-kesediaan') {
+        $ext = kesediaan_file_extension($storedPath);
+        if ($ext !== '') {
+            $fileName .= '.' . $ext;
+        }
+    }
+
+    // Endpoint ini perlu bisa tampil di iframe modal (same-origin) untuk preview PDF.
+    header_remove('X-Frame-Options');
+    header_remove('Content-Security-Policy');
+    header('X-Frame-Options: SAMEORIGIN');
+    header("Content-Security-Policy: default-src 'none'; frame-ancestors 'self';");
+
+    header('Content-Type: ' . $mimeType);
+    if (is_int($fileSize) && $fileSize > 0) {
+        header('Content-Length: ' . (string)$fileSize);
+    }
+    header('Content-Disposition: ' . $disposition . '; filename="' . addcslashes($fileName, "\"\\") . '"');
+    header('X-Content-Type-Options: nosniff');
+
+    $handle = @fopen($absolutePath, 'rb');
+    if ($handle === false) {
+        http_response_code(500);
+        exit('500 - Gagal membaca file.');
+    }
+    fpassthru($handle);
+    fclose($handle);
+    exit;
+}
+
+if ($page === 'bidang') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+
+    $username = (string)$authUser['username'];
+    $asalCabang = (string)$authUser['asal_cabang'];
+    $isAdmin = (string)$authUser['role'] === 'admin';
+    $canAccessWawancara = can_access_wawancara_role((string)$authUser['role']);
+    $_SESSION['role'] = (string)$authUser['role'];
+
+    if ($asalCabang === '') {
+        $asalCabang = '-';
+    }
+
+    $bidangList = personalize_bidang_list_for_cabang(load_bidang_data(), $asalCabang);
+    $votedDetailMap = user_vote_detail_map($username);
+    $votedBidangMap = array_fill_keys(array_keys($votedDetailMap), true);
+    $votingOpen = !$electionClosed;
+    $logoutToken = csrf_token();
+
+    $infoMessage = '';
+    $info = trim((string)($_GET['info'] ?? ''));
+    $infoBidang = trim((string)($_GET['bidang'] ?? ''));
+    if ($info === 'sudah-vote' && $infoBidang !== '' && isset($votedBidangMap[$infoBidang])) {
+        $infoMessage = 'Anda sudah melakukan vote pada ' . $infoBidang . '. Silakan pilih bidang lainnya.';
+    } elseif ($info === 'vote-berhasil' && $infoBidang !== '' && isset($votedBidangMap[$infoBidang])) {
+        $infoMessage = 'Vote untuk ' . $infoBidang . ' berhasil disimpan.';
+    } elseif ($info === 'admin-only') {
+        $infoMessage = 'Halaman dashboard hanya dapat diakses oleh admin.';
+    } elseif ($info === 'wawancara-only') {
+        $infoMessage = 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.';
+    } elseif ($info === 'masa-berakhir') {
+        $infoMessage = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
+    }
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Halaman Pemilihan</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+                color: #111827;
+                min-height: 100vh;
+                padding: 24px 16px;
+            }
+            .card {
+                width: 100%;
+                max-width: 980px;
+                background: #fff;
+                border-radius: 16px;
+                padding: 28px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+                margin: 0 auto;
+            }
+            h1 {
+                margin: 0;
+                font-size: 28px;
+            }
+            p {
+                margin: 0 0 16px;
+                line-height: 1.5;
+                color: #4b5563;
+            }
+            .topbar {
+                display: flex;
+                gap: 16px;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 22px;
+            }
+            .topbar-copy {
+                flex: 1 1 320px;
+                min-width: 0;
+            }
+            .top-actions {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: flex-end;
+                flex: 0 1 auto;
+            }
+            .btn {
+                display: inline-block;
+                text-decoration: none;
+                background: #111827;
+                color: #fff;
+                padding: 8px 12px;
+                border-radius: 7px;
+                font-size: 13px;
+                line-height: 1.2;
+                font-weight: 600;
+                border: 0;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .btn:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .logout-form {
+                margin: 0;
+                display: flex;
+            }
+            .logout-form .btn {
+                width: 100%;
+            }
+            @media (max-width: 760px) {
+                .topbar {
+                    align-items: flex-start;
+                }
+                .top-actions {
+                    width: 100%;
+                    justify-content: flex-start;
+                }
+            }
+            .btn-dashboard {
+                background: #2563eb;
+            }
+            .btn-dashboard:hover {
+                background: #1d4ed8;
+            }
+            .btn-kandidat {
+                background: #475569;
+            }
+            .btn-kandidat:hover {
+                background: #334155;
+            }
+            .btn-wawancara {
+                background: #0f766e;
+            }
+            .btn-wawancara:hover {
+                background: #0d9488;
+            }
+            .grid {
+                display: grid;
+                gap: 16px;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-auto-rows: 1fr;
+            }
+            .bidang-item {
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 16px;
+                background: #f9fafb;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                justify-content: space-between;
+                height: 100%;
+                transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+            }
+            .bidang-item.active {
+                background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+                border-color: #94a3b8;
+                box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
+            }
+            .bidang-item.active:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 14px 28px rgba(15, 23, 42, 0.15);
+            }
+            .bidang-item.inactive {
+                background: #f0fdf4;
+                border-color: #86efac;
+                box-shadow: none;
+                opacity: 0.94;
+            }
+            .bidang-item.inactive .bidang-title {
+                color: #166534;
+            }
+            .bidang-item.inactive .bidang-cabang {
+                color: #166534;
+            }
+            .bidang-item.inactive .picked-candidate {
+                background: #dcfce7;
+                border-color: #4ade80;
+                color: #14532d;
+            }
+            .bidang-title {
+                margin: 0;
+                font-size: 18px;
+                font-weight: 700;
+                color: #111827;
+                text-align: center;
+            }
+            .bidang-cabang {
+                margin: -6px 0 0;
+                font-size: 13px;
+                font-weight: 700;
+                color: #475569;
+                text-align: center;
+            }
+            .picked-candidate {
+                margin: 0;
+                padding: 8px 10px;
+                border-radius: 8px;
+                background: #ecfdf5;
+                border: 1px solid #86efac;
+                color: #14532d;
+                font-size: 13px;
+                line-height: 1.45;
+                text-align: center;
+                min-height: 52px;
+            }
+            .picked-label {
+                display: block;
+                margin-bottom: 4px;
+                font-weight: 600;
+            }
+            .picked-name {
+                display: block;
+                font-weight: 700;
+            }
+            .picked-candidate.empty {
+                background: #f3f4f6;
+                border: 1px dashed #d1d5db;
+                color: #6b7280;
+            }
+            .btn-pilih {
+                display: inline-block;
+                text-decoration: none;
+                text-align: center;
+                background: #4b5563;
+                color: #fff;
+                padding: 10px 12px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                border: 0;
+                cursor: pointer;
+                box-shadow: 0 6px 14px rgba(75, 85, 99, 0.28);
+                transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+            }
+            .btn-pilih:hover {
+                background: #374151;
+                transform: translateY(-1px);
+                box-shadow: 0 10px 18px rgba(55, 65, 81, 0.34);
+            }
+            .btn-pilih:active {
+                transform: translateY(0);
+            }
+            .btn-pilih:focus-visible {
+                outline: 3px solid #9ca3af;
+                outline-offset: 2px;
+            }
+            .btn-pilih.voted {
+                background: #bbf7d0;
+                color: #14532d;
+                border: 1px solid #4ade80;
+                cursor: not-allowed;
+                box-shadow: none;
+                opacity: 0.88;
+                transform: none;
+                pointer-events: none;
+            }
+            .btn-pilih.voted:hover {
+                background: #bbf7d0;
+                box-shadow: none;
+            }
+            .btn-pilih.closed {
+                background: #e5e7eb;
+                color: #475569;
+                border: 1px solid #cbd5e1;
+                cursor: not-allowed;
+                box-shadow: none;
+                opacity: 0.95;
+                pointer-events: none;
+            }
+            .alert-info {
+                margin-bottom: 16px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: #e0f2fe;
+                color: #0c4a6e;
+                font-size: 14px;
+            }
+            @media (max-width: 900px) {
+                .grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+            @media (max-width: 640px) {
+                .card {
+                    padding: 18px;
+                }
+                h1 {
+                    font-size: 22px;
+                }
+                .top-actions {
+                    display: grid;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    width: 100%;
+                }
+                .top-actions .btn,
+                .top-actions .logout-form {
+                    width: 100%;
+                }
+                .top-actions .btn {
+                    text-align: center;
+                }
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <section class="card">
+            <div class="topbar">
+                <div class="topbar-copy">
+                    <h1>Halaman Pemilihan</h1>
+                    <p>Pilih bidang yang diinginkan. Login sebagai <strong><?= h($username) ?></strong> (<?= h($asalCabang) ?>).</p>
+                </div>
+                <div class="top-actions">
+                    <?php if ($isAdmin): ?>
+                        <a class="btn btn-dashboard" href="<?= h(app_index_url(['page' => 'dashboard'])) ?>">Dashboard</a>
+                        <a class="btn btn-kandidat" href="<?= h(app_index_url(['page' => 'kandidat'])) ?>">Kandidat</a>
+                    <?php endif; ?>
+                    <?php if ($canAccessWawancara): ?>
+                        <a class="btn btn-wawancara" href="<?= h(app_index_url(['page' => 'wawancara'])) ?>">Wawancara</a>
+                    <?php endif; ?>
+                    <form class="logout-form" method="post" action="<?= h(app_index_url(['page' => 'logout'])) ?>">
+                        <input type="hidden" name="csrf_token" value="<?= h($logoutToken) ?>">
+                        <button class="btn" type="submit">Logout</button>
+                    </form>
+                </div>
+            </div>
+
+            <?php if ($infoMessage !== ''): ?>
+                <div class="alert-info"><?= h($infoMessage) ?></div>
+            <?php endif; ?>
+
+            <div class="grid">
+                <?php foreach ($bidangList as $bidangItem): ?>
+                    <?php
+                    $bidangTitle = (string)$bidangItem['title'];
+                    $bidangParts = bidang_title_parts($bidangTitle);
+                    $bidangMainTitle = (string)($bidangParts['main'] ?? $bidangTitle);
+                    if ($bidangMainTitle === '') {
+                        $bidangMainTitle = $bidangTitle;
+                    }
+                    $bidangCabangTitle = (string)($bidangParts['cabang'] ?? '');
+                    $isVoted = isset($votedBidangMap[$bidangTitle]);
+                    $pickedName = 'Belum dipilih';
+                    if ($isVoted) {
+                        $voteDetail = $votedDetailMap[$bidangTitle] ?? [];
+                        $pickedName = trim((string)($voteDetail['kandidat']['nama_lengkap'] ?? ''));
+                        if ($pickedName === '') {
+                            $pickedName = '-';
+                        }
+                    }
+                    ?>
+                    <article class="bidang-item<?= $isVoted ? ' inactive' : ' active' ?>">
+                        <h2 class="bidang-title"><?= h($bidangMainTitle) ?></h2>
+                        <?php if ($bidangCabangTitle !== ''): ?>
+                            <p class="bidang-cabang"><?= h($bidangCabangTitle) ?></p>
+                        <?php endif; ?>
+                        <p class="picked-candidate<?= $isVoted ? '' : ' empty' ?>">
+                            <span class="picked-label">Kandidat terpilih:</span>
+                            <span class="picked-name"><?= h($pickedName) ?></span>
+                        </p>
+                        <?php if ($isVoted): ?>
+                            <button class="btn-pilih voted" type="button" disabled>Sudah Vote</button>
+                        <?php elseif (!$votingOpen): ?>
+                            <button class="btn-pilih closed" type="button" disabled>Pemilihan Ditutup</button>
+                        <?php else: ?>
+                            <a class="btn-pilih" href="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => $bidangTitle])) ?>">Pilih Sekarang</a>
+                        <?php endif; ?>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+        </section>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($page === 'dashboard' || $page === 'kandidat') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+    if ((string)$authUser['role'] !== 'admin') {
+        redirect_to_page('bidang', ['info' => 'admin-only']);
+    }
+
+    $username = (string)$authUser['username'];
+    $asalCabang = trim((string)$authUser['asal_cabang']);
+    $isDashboardPage = $page === 'dashboard';
+    $isKandidatPage = $page === 'kandidat';
+    $kandidatAllowedProcessFilters = ['all', 'belum_assign', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
+    $kandidatProcessFilter = normalize_query_choice((string)($_GET['kandidat_filter'] ?? ''), $kandidatAllowedProcessFilters, 'all');
+    $kandidatPageParams = ['page' => 'kandidat'];
+    if ($kandidatProcessFilter !== 'all') {
+        $kandidatPageParams['kandidat_filter'] = $kandidatProcessFilter;
+    }
+    $_SESSION['role'] = 'admin';
+    if ($asalCabang === '') {
+        $asalCabang = '-';
+    }
+    $dashboardElectionClosed = $electionClosed;
+    $dashboardLogoutToken = csrf_token();
+    $dashboardAction = trim((string)($_POST['dashboard_action'] ?? ''));
+    $importSuccessMessage = '';
+    $importErrors = [];
+    $importWarnings = [];
+    $flaggingSuccessMessage = '';
+    $flaggingErrorMessage = '';
+    $assignmentSuccessMessage = '';
+    $assignmentErrorMessage = '';
+
+    if ($method === 'POST' && $dashboardAction === 'import_excel') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $importErrors[] = 'Sesi tidak valid. Muat ulang halaman dashboard lalu coba lagi.';
+        } elseif (!isset($_FILES['excel_file']) || !is_array($_FILES['excel_file'])) {
+            $importErrors[] = 'File Excel tidak ditemukan.';
+        } else {
+            $uploadedFile = $_FILES['excel_file'];
+            $uploadError = (int)($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($uploadError !== UPLOAD_ERR_OK) {
+                $importErrors[] = upload_error_message($uploadError);
+            } else {
+                $originalName = trim((string)($uploadedFile['name'] ?? ''));
+                $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+                $fileSize = (int)($uploadedFile['size'] ?? 0);
+                $tmpPath = (string)($uploadedFile['tmp_name'] ?? '');
+
+                if ($extension !== 'xlsx') {
+                    $importErrors[] = 'Format file harus .xlsx sesuai template.';
+                } elseif ($fileSize <= 0 || $fileSize > IMPORT_MAX_BYTES) {
+                    $importErrors[] = 'Ukuran file harus lebih kecil dari ' . (int)(IMPORT_MAX_BYTES / (1024 * 1024)) . ' MB.';
+                } elseif ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+                    $importErrors[] = 'File upload tidak valid.';
+                } else {
+                    $importResult = import_users_and_kandidat_from_xlsx($tmpPath);
+                    $importWarnings = (array)($importResult['warnings'] ?? []);
+
+                    if (!(bool)($importResult['ok'] ?? false)) {
+                        $importErrors = array_merge($importErrors, (array)($importResult['errors'] ?? ['Import gagal diproses.']));
+                    } else {
+                        $summary = (array)($importResult['summary'] ?? []);
+                        $importSuccessMessage = 'Import selesai. '
+                            . 'User baru: ' . (int)($summary['users_inserted'] ?? 0) . ', '
+                            . 'user diperbarui: ' . (int)($summary['users_updated'] ?? 0) . ', '
+                            . 'kandidat baru: ' . (int)($summary['kandidat_inserted'] ?? 0) . ', '
+                            . 'kandidat diperbarui: ' . (int)($summary['kandidat_updated'] ?? 0) . '.';
+                    }
+                }
+            }
+        }
+    }
+
+    $rawVotes = load_pemilihan_data();
+    $voteItems = $rawVotes['pemilihan'] ?? [];
+    if (!is_array($voteItems)) {
+        $voteItems = [];
+    }
+
+    $totalVotes = 0;
+    $uniqueVoterMap = [];
+    $uniqueVotePairMap = [];
+    $userBidangMap = [];
+    $bidangSummary = [];
+    foreach ($voteItems as $vote) {
+        if (!is_array($vote)) {
+            continue;
+        }
+
+        $totalVotes++;
+        $voter = trim((string)($vote['username'] ?? ''));
+        if ($voter !== '') {
+            $uniqueVoterMap[$voter] = true;
+        }
+
+        $bidang = trim((string)($vote['bidang'] ?? '-'));
+        if ($bidang === '') {
+            $bidang = '-';
+        }
+
+        $normalizedVoter = normalize_username($voter);
+        if ($normalizedVoter !== '' && $bidang !== '-') {
+            $pairKey = $normalizedVoter . '||' . $bidang;
+            $uniqueVotePairMap[$pairKey] = true;
+
+            if (!isset($userBidangMap[$normalizedVoter])) {
+                $userBidangMap[$normalizedVoter] = [];
+            }
+            $userBidangMap[$normalizedVoter][$bidang] = true;
+        }
+
+        $candidateName = trim((string)($vote['kandidat']['nama_lengkap'] ?? '-'));
+        if ($candidateName === '') {
+            $candidateName = '-';
+        }
+        $candidateCabang = trim((string)($vote['kandidat']['asal_cabang'] ?? '-'));
+        if ($candidateCabang === '') {
+            $candidateCabang = '-';
+        }
+
+        if (!isset($bidangSummary[$bidang])) {
+            $bidangSummary[$bidang] = [
+                'total' => 0,
+                'candidates' => [],
+            ];
+        }
+
+        $bidangSummary[$bidang]['total']++;
+
+        $candidateKey = $candidateName . '||' . $candidateCabang;
+        if (!isset($bidangSummary[$bidang]['candidates'][$candidateKey])) {
+            $bidangSummary[$bidang]['candidates'][$candidateKey] = [
+                'nama' => $candidateName,
+                'cabang' => $candidateCabang,
+                'count' => 0,
+            ];
+        }
+        $bidangSummary[$bidang]['candidates'][$candidateKey]['count']++;
+    }
+
+    foreach ($bidangSummary as $bidang => $summary) {
+        uasort($summary['candidates'], static function (array $a, array $b): int {
+            $countCompare = $b['count'] <=> $a['count'];
+            if ($countCompare !== 0) {
+                return $countCompare;
+            }
+            return strcmp((string)$a['nama'], (string)$b['nama']);
+        });
+        $sortedCandidates = array_values($summary['candidates']);
+        $bidangSummary[$bidang]['candidates'] = $sortedCandidates;
+        $bidangSummary[$bidang]['candidate_total'] = count($sortedCandidates);
+        $bidangSummary[$bidang]['top_candidates'] = array_slice($sortedCandidates, 0, 10);
+    }
+
+    $orderedBidangSummary = [];
+    $orderedAssigned = [];
+    $allBidang = load_bidang_data();
+    $cabangOrderMap = [];
+    foreach (known_cabang_values() as $idx => $cabangItem) {
+        $cabangKey = normalize_header_key((string)$cabangItem);
+        if ($cabangKey !== '' && !isset($cabangOrderMap[$cabangKey])) {
+            $cabangOrderMap[$cabangKey] = (int)$idx;
+        }
+    }
+
+    foreach ($allBidang as $bidangItem) {
+        if (!is_array($bidangItem)) {
+            continue;
+        }
+
+        $orderTitle = trim((string)($bidangItem['title'] ?? ''));
+        if ($orderTitle === '') {
+            continue;
+        }
+
+        if (is_ketua_pengurus_lokal_bidang($orderTitle)) {
+            $kplTitles = [];
+            foreach ($bidangSummary as $summaryTitle => $_summaryValue) {
+                if (isset($orderedAssigned[$summaryTitle])) {
+                    continue;
+                }
+                if (is_ketua_pengurus_lokal_bidang((string)$summaryTitle)) {
+                    $kplTitles[] = (string)$summaryTitle;
+                }
+            }
+
+            usort($kplTitles, static function (string $a, string $b) use ($cabangOrderMap): int {
+                $cabangA = normalize_header_key(extract_ketua_pengurus_lokal_cabang($a));
+                $cabangB = normalize_header_key(extract_ketua_pengurus_lokal_cabang($b));
+                $idxA = $cabangOrderMap[$cabangA] ?? PHP_INT_MAX;
+                $idxB = $cabangOrderMap[$cabangB] ?? PHP_INT_MAX;
+                if ($idxA !== $idxB) {
+                    return $idxA <=> $idxB;
+                }
+                return strnatcasecmp($a, $b);
+            });
+
+            foreach ($kplTitles as $kplTitle) {
+                $orderedBidangSummary[$kplTitle] = $bidangSummary[$kplTitle];
+                $orderedAssigned[$kplTitle] = true;
+            }
+            continue;
+        }
+
+        if (!isset($orderedAssigned[$orderTitle]) && isset($bidangSummary[$orderTitle])) {
+            $orderedBidangSummary[$orderTitle] = $bidangSummary[$orderTitle];
+            $orderedAssigned[$orderTitle] = true;
+        }
+    }
+
+    $remainingTitles = [];
+    foreach ($bidangSummary as $summaryTitle => $_summaryValue) {
+        if (!isset($orderedAssigned[$summaryTitle])) {
+            $remainingTitles[] = (string)$summaryTitle;
+        }
+    }
+    natcasesort($remainingTitles);
+    foreach ($remainingTitles as $remainingTitle) {
+        $orderedBidangSummary[$remainingTitle] = $bidangSummary[$remainingTitle];
+    }
+    $bidangSummary = $orderedBidangSummary;
+
+    $allUsers = load_user_data();
+    $interviewerUsers = [];
+    $interviewerMapByLogin = [];
+    foreach ($allUsers as $userItem) {
+        if (!is_array($userItem)) {
+            continue;
+        }
+        if (normalize_role((string)($userItem['role'] ?? 'user')) !== 'pewawancara') {
+            continue;
+        }
+
+        $loginUsername = normalize_login_username((string)($userItem['username'] ?? ''));
+        $namaLengkap = normalize_username((string)($userItem['nama_lengkap'] ?? $userItem['username'] ?? ''));
+        $asalCabangPewawancara = trim((string)($userItem['asal_cabang'] ?? ''));
+        if ($loginUsername === '' || $namaLengkap === '') {
+            continue;
+        }
+        if (isset($interviewerMapByLogin[$loginUsername])) {
+            continue;
+        }
+
+        $record = [
+            'login_username' => $loginUsername,
+            'nama_lengkap' => $namaLengkap,
+            'asal_cabang' => $asalCabangPewawancara,
+        ];
+        $interviewerUsers[] = $record;
+        $interviewerMapByLogin[$loginUsername] = $record;
+    }
+    usort($interviewerUsers, static function (array $a, array $b): int {
+        $nameCompare = strnatcasecmp((string)($a['nama_lengkap'] ?? ''), (string)($b['nama_lengkap'] ?? ''));
+        if ($nameCompare !== 0) {
+            return $nameCompare;
+        }
+        return strnatcasecmp((string)($a['login_username'] ?? ''), (string)($b['login_username'] ?? ''));
+    });
+
+    if ($method === 'POST' && $dashboardAction === 'toggle_candidate_flag') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+        $flagType = trim((string)($_POST['flag_type'] ?? ''));
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $flaggingErrorMessage = 'Sesi tidak valid. Muat ulang halaman kandidat lalu coba lagi.';
+        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $flaggingErrorMessage = 'Data kandidat untuk flagging tidak lengkap.';
+        } elseif (!is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
+            $flaggingErrorMessage = 'Flagging hanya dapat dilakukan pada kandidat Top 10 di bidang terkait.';
+        } elseif (strtolower($flagType) === 'lanjut') {
+            if (!$isKandidatPage) {
+                $flaggingErrorMessage = 'Perubahan status lanjut proses hanya dapat dilakukan dari halaman kandidat admin.';
+            } else {
+                $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
+                $candidateFlagMap = load_flagging_map();
+                $candidateFlag = (array)($candidateFlagMap[$candidateKey] ?? []);
+                $isCurrentlyLanjut = !empty($candidateFlag['lanjut_proses']);
+                $candidateKesediaanMap = load_kesediaan_form_map();
+                $candidateForms = (array)($candidateKesediaanMap[$candidateKey] ?? []);
+                $candidateFormCount = 0;
+                foreach ($candidateForms as $candidateFormItem) {
+                    if (!is_array($candidateFormItem)) {
+                        continue;
+                    }
+                    $candidateFormStatus = normalize_kesediaan_status((string)($candidateFormItem['status_kesediaan'] ?? ''));
+                    if ($candidateFormStatus === '') {
+                        continue;
+                    }
+                    $candidateFormCount++;
+                }
+
+                if (!$isCurrentlyLanjut && $candidateFormCount <= 0) {
+                    $flaggingErrorMessage = 'Lanjut proses hanya dapat ditandai jika kandidat sudah memiliki form kesediaan.';
+                } else {
+                    $flagResult = mark_candidate_lanjut_proses(
+                        $targetBidang,
+                        $targetKandidatNama,
+                        $targetKandidatCabang,
+                        $username
+                    );
+
+                    if (!($flagResult['ok'] ?? false)) {
+                        $flaggingErrorMessage = (string)($flagResult['message'] ?? 'Gagal menandai lanjut proses.');
+                    } else {
+                        $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Status lanjut proses berhasil diperbarui.');
+                    }
+                }
+            }
+        } elseif (strtolower($flagType) === 'scorecard_submit') {
+            $flagResult = cancel_submitted_scorecard_submission(
+                $targetBidang,
+                $targetKandidatNama,
+                $targetKandidatCabang,
+                $username
+            );
+
+            if (!($flagResult['ok'] ?? false)) {
+                $flaggingErrorMessage = (string)($flagResult['message'] ?? 'Batal submit score card gagal diproses.');
+            } else {
+                $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Submit score card berhasil dibatalkan.');
+            }
+        } else {
+            $flagResult = toggle_candidate_flag_status(
+                $targetBidang,
+                $targetKandidatNama,
+                $targetKandidatCabang,
+                $flagType,
+                $username
+            );
+
+            if (!($flagResult['ok'] ?? false)) {
+                $flaggingErrorMessage = (string)($flagResult['message'] ?? 'Proses flagging gagal disimpan.');
+            } else {
+                $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Status flagging berhasil diperbarui.');
+            }
+        }
+    }
+
+    if ($method === 'POST' && $dashboardAction === 'assign_interviewer') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+        $selectedInterviewerLogin = normalize_login_username((string)($_POST['interviewer_login_username'] ?? ''));
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $assignmentErrorMessage = 'Sesi tidak valid. Muat ulang halaman kandidat lalu coba lagi.';
+        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $assignmentErrorMessage = 'Data kandidat untuk assignment tidak lengkap.';
+        } elseif (!is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
+            $assignmentErrorMessage = 'Assignment hanya dapat dilakukan pada kandidat Top 10 di bidang terkait.';
+        } elseif ($selectedInterviewerLogin !== '' && !isset($interviewerMapByLogin[$selectedInterviewerLogin])) {
+            $assignmentErrorMessage = 'User pewawancara yang dipilih tidak valid.';
+        } else {
+            $interviewerNamaLengkap = '';
+            $interviewerAsalCabang = '';
+            if ($selectedInterviewerLogin !== '') {
+                $interviewerUser = find_interviewer_user_by_login_username($allUsers, $selectedInterviewerLogin);
+                if ($interviewerUser === null) {
+                    $assignmentErrorMessage = 'User pewawancara yang dipilih tidak ditemukan.';
+                } else {
+                    $interviewerNamaLengkap = (string)($interviewerUser['nama_lengkap'] ?? '');
+                    $interviewerAsalCabang = (string)($interviewerUser['asal_cabang'] ?? '');
+                }
+            }
+
+            if ($assignmentErrorMessage === '') {
+                $assignmentResult = set_candidate_interviewer_assignment(
+                    $targetBidang,
+                    $targetKandidatNama,
+                    $targetKandidatCabang,
+                    $selectedInterviewerLogin,
+                    $interviewerNamaLengkap,
+                    $interviewerAsalCabang,
+                    $username
+                );
+
+                if (!($assignmentResult['ok'] ?? false)) {
+                    $assignmentErrorMessage = (string)($assignmentResult['message'] ?? 'Assignment pewawancara gagal disimpan.');
+                } else {
+                    $assignmentSuccessMessage = (string)($assignmentResult['message'] ?? 'Assignment pewawancara berhasil diperbarui.');
+                }
+            }
+        }
+    }
+
+    $flaggingMap = load_flagging_map();
+    $interviewerAssignmentMap = load_wawancara_assignment_map();
+    $scorecardSubmissionMap = load_scorecard_submission_map();
+    $kesediaanFormMap = load_kesediaan_form_map();
+
+    $totalPemilih = count($uniqueVoterMap);
+    $totalBidangTerisi = count($bidangSummary);
+    $totalUsers = count($allUsers);
+    $totalBidang = count($allBidang);
+    $targetVotes = $totalUsers * $totalBidang;
+    $completedVotes = count($uniqueVotePairMap);
+    $progressPercent = $targetVotes > 0 ? ($completedVotes / $targetVotes) * 100 : 0;
+    $progressPercent = min(100, max(0, $progressPercent));
+    $progressPercentText = number_format($progressPercent, 1);
+    $progressWidth = number_format($progressPercent, 2, '.', '');
+
+    $usersStarted = count($userBidangMap);
+    $usersCompletedAll = 0;
+    if ($totalBidang > 0) {
+        foreach ($allUsers as $userItem) {
+            if (!is_array($userItem)) {
+                continue;
+            }
+            $userName = normalize_username((string)($userItem['username'] ?? ''));
+            if ($userName === '') {
+                continue;
+            }
+            $filledBidang = isset($userBidangMap[$userName]) ? count($userBidangMap[$userName]) : 0;
+            if ($filledBidang >= $totalBidang) {
+                $usersCompletedAll++;
+            }
+        }
+    }
+
+    $voteLogData = load_vote_log_data();
+    $voteLogs = $voteLogData['logs'] ?? [];
+    if (!is_array($voteLogs)) {
+        $voteLogs = [];
+    }
+    $voteLogs = array_values(array_filter($voteLogs, static fn($item): bool => is_array($item)));
+    usort($voteLogs, static function (array $a, array $b): int {
+        return strcmp((string)($b['timestamp'] ?? ''), (string)($a['timestamp'] ?? ''));
+    });
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title><?= h($isDashboardPage ? 'Dashboard Rekap' : 'Halaman Kandidat') ?></title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+                color: #0f172a;
+                min-height: 100vh;
+                padding: 24px 16px;
+            }
+            .wrap {
+                width: 100%;
+                max-width: 1060px;
+                margin: 0 auto;
+            }
+            .panel {
+                background: #fff;
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+                padding: 20px;
+                box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+            }
+            .topbar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+                margin-bottom: 18px;
+            }
+            .title {
+                margin: 0;
+                font-size: 28px;
+            }
+            .actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .btn {
+                display: inline-block;
+                text-decoration: none;
+                padding: 10px 14px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #fff;
+                background: #111827;
+                border: 0;
+                cursor: pointer;
+            }
+            .btn-back {
+                display: inline-block;
+                text-decoration: none;
+                background: #111827;
+                color: #fff;
+                padding: 10px 16px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                border: 0;
+            }
+            .btn-back:hover {
+                background: #0f172a;
+            }
+            .btn-back:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .btn-back:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+            .deadline-box {
+                margin-bottom: 16px;
+                border: 1px solid #cbd5e1;
+                border-radius: 10px;
+                padding: 12px 14px;
+                background: #f8fafc;
+            }
+            .deadline-title {
+                margin: 0 0 6px;
+                font-size: 14px;
+                color: #334155;
+                font-weight: 700;
+            }
+            .deadline-meta {
+                margin: 0;
+                font-size: 13px;
+                color: #475569;
+            }
+            .deadline-status {
+                margin-top: 8px;
+                display: inline-block;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 4px 10px;
+                border-radius: 999px;
+            }
+            .deadline-status.open {
+                background: #dcfce7;
+                color: #166534;
+                border: 1px solid #86efac;
+            }
+            .deadline-status.closed {
+                background: #fee2e2;
+                color: #b91c1c;
+                border: 1px solid #fecaca;
+            }
+            .import-box {
+                margin-bottom: 16px;
+                border: 1px solid #cbd5e1;
+                border-radius: 10px;
+                padding: 14px;
+                background: #f8fafc;
+            }
+            .import-title {
+                margin: 0 0 6px;
+                font-size: 15px;
+                font-weight: 700;
+                color: #1e293b;
+            }
+            .import-note {
+                margin: 0 0 10px;
+                font-size: 13px;
+                color: #475569;
+                line-height: 1.45;
+            }
+            .import-form {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .file-input {
+                flex: 1 1 320px;
+                min-width: 220px;
+                font-size: 13px;
+                color: #334155;
+                background: #fff;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 8px 10px;
+            }
+            .btn-import {
+                background: #0f766e;
+            }
+            .btn-import:hover {
+                background: #0d9488;
+            }
+            .import-alert {
+                margin-top: 10px;
+                border-radius: 8px;
+                padding: 10px 12px;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .import-alert.success {
+                border: 1px solid #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .import-alert.error {
+                border: 1px solid #fecaca;
+                background: #fee2e2;
+                color: #b91c1c;
+            }
+            .import-alert.warning {
+                border: 1px solid #fde68a;
+                background: #fffbeb;
+                color: #92400e;
+            }
+            .import-alert ul {
+                margin: 6px 0 0;
+                padding-left: 18px;
+            }
+            .import-alert li {
+                margin-bottom: 4px;
+            }
+            .stat {
+                border: 1px solid #e2e8f0;
+                background: #f8fafc;
+                border-radius: 10px;
+                padding: 14px;
+            }
+            .stat-label {
+                margin: 0 0 6px;
+                color: #64748b;
+                font-size: 13px;
+            }
+            .stat-value {
+                margin: 0;
+                font-size: 24px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            .progress-card {
+                border: 1px solid #bfdbfe;
+                background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+                border-radius: 12px;
+                padding: 14px;
+                margin-bottom: 16px;
+            }
+            .progress-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                gap: 10px;
+                margin-bottom: 8px;
+            }
+            .progress-title {
+                margin: 0;
+                font-size: 16px;
+                color: #1e3a8a;
+            }
+            .progress-percent {
+                margin: 0;
+                font-size: 18px;
+                font-weight: 700;
+                color: #1d4ed8;
+            }
+            .progress-meta {
+                margin: 0 0 10px;
+                font-size: 13px;
+                color: #334155;
+            }
+            .progress-track {
+                width: 100%;
+                height: 10px;
+                border-radius: 999px;
+                background: #bfdbfe;
+                overflow: hidden;
+            }
+            .progress-fill {
+                height: 100%;
+                border-radius: 999px;
+                background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%);
+                transition: width 0.3s ease;
+            }
+            .progress-detail {
+                margin-top: 10px;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+                color: #334155;
+                font-size: 13px;
+            }
+            .progress-detail strong {
+                color: #0f172a;
+            }
+            .kandidat-filter-bar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 16px;
+                padding: 10px 12px;
+                border: 1px solid #dbe3ef;
+                border-radius: 10px;
+                background: #f8fafc;
+            }
+            .kandidat-filter-label {
+                margin: 0;
+                font-size: 14px;
+                font-weight: 700;
+                color: #334155;
+            }
+            .kandidat-filter-select {
+                width: min(100%, 220px);
+                min-width: 180px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #fff;
+                color: #0f172a;
+                padding: 8px 10px;
+                font-size: 14px;
+            }
+            .kandidat-filter-select:focus-visible,
+            .assign-select:focus-visible,
+            .flag-btn:focus-visible,
+            .file-input:focus-visible,
+            .btn-import:focus-visible {
+                outline: 3px solid #bfdbfe;
+                outline-offset: 2px;
+            }
+            .kandidat-filter-empty {
+                display: none;
+                margin-bottom: 16px;
+                padding: 12px;
+                border-radius: 8px;
+                background: #f8fafc;
+                border: 1px dashed #cbd5e1;
+                color: #64748b;
+                text-align: center;
+            }
+            .rekap-grid {
+                display: grid;
+                gap: 10px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .rekap-card {
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                padding: 12px;
+                background: #fff;
+            }
+            .rekap-head {
+                display: flex;
+                justify-content: flex-start;
+                align-items: baseline;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .rekap-title {
+                margin: 0;
+                font-size: 18px;
+            }
+            .rekap-title-sub {
+                display: block;
+                margin-top: 3px;
+                font-size: 12px;
+                font-weight: 700;
+                color: #64748b;
+            }
+            .rekap-total {
+                margin: 0;
+                font-size: 13px;
+                color: #475569;
+                font-weight: 700;
+            }
+            .candidate-list {
+                margin: 0;
+                padding: 0;
+                list-style: none;
+                color: #334155;
+                display: grid;
+                gap: 10px;
+            }
+            .candidate-item {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #f8fafc;
+                padding: 10px;
+                scroll-margin-top: 14px;
+            }
+            .candidate-main {
+                color: #1e293b;
+                font-size: 14px;
+                font-weight: 600;
+                line-height: 1.5;
+            }
+            .flag-state {
+                margin-top: 6px;
+                display: flex;
+                gap: 4px;
+                flex-wrap: wrap;
+            }
+            .assign-state {
+                margin-top: 0;
+            }
+            .flag-badge {
+                display: inline-block;
+                padding: 2px 7px;
+                border-radius: 999px;
+                border: 1px solid #cbd5e1;
+                background: #f1f5f9;
+                color: #475569;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .flag-badge.on {
+                border-color: #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .flag-badge.screening-on {
+                border-color: #a5b4fc;
+                background: #e0e7ff;
+                color: #3730a3;
+            }
+            .flag-badge.interviewer-on {
+                border-color: #7dd3fc;
+                background: #e0f2fe;
+                color: #075985;
+            }
+            .flag-badge.kesediaan-empty {
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #475569;
+            }
+            .flag-badge.kesediaan-progress {
+                border-color: #93c5fd;
+                background: #dbeafe;
+                color: #1e3a8a;
+            }
+            .flag-badge.kesediaan-complete {
+                border-color: #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .flag-badge.scorecard-empty {
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .flag-badge.scorecard-on {
+                border-color: #fcd34d;
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .flag-form {
+                margin-top: 0;
+                display: flex;
+                gap: 6px;
+                flex-wrap: nowrap;
+                flex: 0 0 auto;
+                min-width: auto;
+            }
+            .candidate-actions {
+                margin-top: 8px;
+                display: flex;
+                gap: 6px;
+                flex-wrap: nowrap;
+                align-items: center;
+            }
+            .assign-form {
+                margin-top: 0;
+                display: flex;
+                gap: 8px;
+                flex-wrap: nowrap;
+                align-items: center;
+                flex: 0 0 auto;
+            }
+            .assign-select {
+                flex: 0 1 168px;
+                min-width: 132px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 0 10px;
+                height: 32px;
+                font-size: 12px;
+                background: #fff;
+                color: #1e293b;
+            }
+            .assign-note {
+                margin: 6px 0 0;
+                color: #92400e;
+                font-size: 12px;
+            }
+            .flag-btn {
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #334155;
+                padding: 0 10px;
+                height: 32px;
+                font-size: 12px;
+                line-height: 1;
+                font-weight: 700;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .flag-btn:hover {
+                background: #f8fafc;
+            }
+            .flag-btn.active-lanjut {
+                border-color: #4ade80;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .flag-btn.active-screening {
+                border-color: #818cf8;
+                background: #e0e7ff;
+                color: #3730a3;
+            }
+            .flag-btn:disabled {
+                opacity: 1;
+                cursor: not-allowed;
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .top10-title {
+                margin: 0 0 8px;
+                font-size: 13px;
+                color: #475569;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+            }
+            .top10-note {
+                margin: 10px 0 0;
+                color: #64748b;
+                font-size: 12px;
+            }
+            .empty {
+                margin: 10px 0 0;
+                padding: 12px;
+                border-radius: 8px;
+                background: #f8fafc;
+                border: 1px dashed #cbd5e1;
+                color: #64748b;
+                text-align: center;
+            }
+            .log-section {
+                margin-top: 18px;
+            }
+            .section-title {
+                margin: 0 0 10px;
+                font-size: 18px;
+            }
+            .table-wrap {
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                overflow: auto;
+                background: #fff;
+                width: 100%;
+                max-height: 320px;
+                margin: 0;
+            }
+            .log-table {
+                width: 100%;
+                border-collapse: collapse;
+                min-width: 780px;
+                font-size: 12px;
+            }
+            .log-table th,
+            .log-table td {
+                padding: 8px 10px;
+                text-align: left;
+                border-bottom: 1px solid #e2e8f0;
+                vertical-align: top;
+                line-height: 1.4;
+            }
+            .log-table th {
+                background: #f8fafc;
+                color: #334155;
+                font-weight: 700;
+                position: sticky;
+                top: 0;
+                z-index: 1;
+            }
+            .log-table tr:last-child td {
+                border-bottom: 0;
+            }
+            .mono {
+                font-family: Consolas, monospace;
+                color: #475569;
+            }
+            @media (max-width: 820px) {
+                .stats {
+                    grid-template-columns: 1fr;
+                }
+                .progress-detail {
+                    grid-template-columns: 1fr;
+                }
+                .kandidat-filter-bar {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+                .kandidat-filter-select {
+                    width: 100%;
+                    min-width: 0;
+                }
+                .rekap-grid {
+                    grid-template-columns: 1fr;
+                }
+                .candidate-actions {
+                    flex-wrap: wrap;
+                    align-items: stretch;
+                }
+                .flag-form {
+                    flex-wrap: wrap;
+                }
+                .assign-form {
+                    flex-wrap: wrap;
+                    width: 100%;
+                }
+                .assign-select {
+                    flex: 1 1 100%;
+                    min-width: 0;
+                    width: 100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main class="wrap">
+            <section class="panel">
+                <div class="topbar">
+                    <div>
+                        <h1 class="title"><?= h($isDashboardPage ? 'Dashboard Rekap Pemilihan' : 'Halaman Kandidat') ?></h1>
+                    </div>
+                    <div class="actions">
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                    </div>
+                </div>
+                <?php if ($isDashboardPage): ?>
+                <div class="deadline-box">
+                    <p class="deadline-title">Deadline Pemilihan</p>
+                    <p class="deadline-meta">Batas akhir pemilihan sampai <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.</p>
+                    <span class="deadline-status <?= $dashboardElectionClosed ? 'closed' : 'open' ?>">
+                        <?= $dashboardElectionClosed ? 'Masa pemilihan berakhir' : 'Masa pemilihan masih berjalan' ?>
+                    </span>
+                </div>
+
+                <section class="import-box">
+                    <h2 class="import-title">Import Data User & Kandidat</h2>
+                    <p class="import-note">
+                        Upload file template Excel (.xlsx) dengan 2 sheet: <strong>MASTER PEMILIH</strong> dan <strong>MASTER KANDIDAT</strong>.
+                        User import otomatis memakai role <strong>user</strong>, username format nama depan + inisial nama berikutnya, dan password dari 6 digit belakang <strong>Nomor Telpon</strong>.
+                    </p>
+                    <form class="import-form" method="post" action="<?= h(app_index_url(['page' => 'dashboard'])) ?>" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
+                        <input type="hidden" name="dashboard_action" value="import_excel">
+                        <input class="file-input" type="file" name="excel_file" accept=".xlsx" required>
+                        <button class="btn btn-import" type="submit">Import Excel</button>
+                    </form>
+
+                    <?php if ($importSuccessMessage !== ''): ?>
+                        <div class="import-alert success"><?= h($importSuccessMessage) ?></div>
+                    <?php endif; ?>
+
+                    <?php if ($importErrors !== []): ?>
+                        <div class="import-alert error">
+                            <strong>Import gagal:</strong>
+                            <ul>
+                                <?php foreach ($importErrors as $errorItem): ?>
+                                    <li><?= h((string)$errorItem) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($importWarnings !== []): ?>
+                        <?php
+                        $warningPreview = array_slice($importWarnings, 0, 12);
+                        $warningRemaining = count($importWarnings) - count($warningPreview);
+                        ?>
+                        <div class="import-alert warning">
+                            <strong>Catatan import:</strong>
+                            <ul>
+                                <?php foreach ($warningPreview as $warningItem): ?>
+                                    <li><?= h((string)$warningItem) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                            <?php if ($warningRemaining > 0): ?>
+                                <div>... dan <?= h((string)$warningRemaining) ?> catatan lainnya.</div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+                </section>
+                <?php endif; ?>
+
+                <?php if ($isKandidatPage): ?>
+                <?php if ($flaggingSuccessMessage !== ''): ?>
+                    <div class="import-alert success"><?= h($flaggingSuccessMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($flaggingErrorMessage !== ''): ?>
+                    <div class="import-alert error"><?= h($flaggingErrorMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($assignmentSuccessMessage !== ''): ?>
+                    <div class="import-alert success"><?= h($assignmentSuccessMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($assignmentErrorMessage !== ''): ?>
+                    <div class="import-alert error"><?= h($assignmentErrorMessage) ?></div>
+                <?php endif; ?>
+                <?php endif; ?>
+
+                <?php if ($isDashboardPage): ?>
+                <div class="stats">
+                    <article class="stat">
+                        <p class="stat-label">Total Vote Tersimpan</p>
+                        <p class="stat-value"><?= h((string)$totalVotes) ?></p>
+                    </article>
+                    <article class="stat">
+                        <p class="stat-label">Total Pemilih Unik</p>
+                        <p class="stat-value"><?= h((string)$totalPemilih) ?></p>
+                    </article>
+                    <article class="stat">
+                        <p class="stat-label">Bidang Terisi</p>
+                        <p class="stat-value"><?= h((string)$totalBidangTerisi) ?></p>
+                    </article>
+                </div>
+
+                <article class="progress-card">
+                    <div class="progress-head">
+                        <h2 class="progress-title">Progress Voting Keseluruhan</h2>
+                        <p class="progress-percent"><?= h($progressPercentText) ?>%</p>
+                    </div>
+                    <p class="progress-meta">
+                        <?= h((string)$completedVotes) ?> dari <?= h((string)$targetVotes) ?> vote
+                        (<?= h((string)$totalUsers) ?> user x <?= h((string)$totalBidang) ?> bidang)
+                    </p>
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: <?= h($progressWidth) ?>%;"></div>
+                    </div>
+                    <div class="progress-detail">
+                        <div>User sudah vote: <strong><?= h((string)$usersStarted) ?>/<?= h((string)$totalUsers) ?></strong></div>
+                        <div>User tuntas semua bidang: <strong><?= h((string)$usersCompletedAll) ?>/<?= h((string)$totalUsers) ?></strong></div>
+                    </div>
+                </article>
+                <?php endif; ?>
+
+                <?php if ($isKandidatPage): ?>
+                <?php if ($bidangSummary === []): ?>
+                    <p class="empty">Belum ada data pemilihan yang tersimpan.</p>
+                <?php else: ?>
+                    <div class="kandidat-filter-bar">
+                        <p class="kandidat-filter-label">Filter proses kandidat</p>
+                        <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat">
+                            <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?>>Semua</option>
+                            <option value="belum_assign" <?= $kandidatProcessFilter === 'belum_assign' ? 'selected' : '' ?>>Belum di-assign</option>
+                            <option value="belum_lanjut" <?= $kandidatProcessFilter === 'belum_lanjut' ? 'selected' : '' ?>>Belum Lanjut Proses</option>
+                            <option value="lanjut" <?= $kandidatProcessFilter === 'lanjut' ? 'selected' : '' ?>>Lanjut Proses</option>
+                            <option value="screening" <?= $kandidatProcessFilter === 'screening' ? 'selected' : '' ?>>Lolos Screening</option>
+                            <option value="scorecard_submitted" <?= $kandidatProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?>>Sudah Submit Score Card</option>
+                        </select>
+                    </div>
+                    <div class="kandidat-filter-empty" id="kandidatFilterEmpty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
+                    <div class="rekap-grid">
+                        <?php foreach ($bidangSummary as $bidang => $summary): ?>
+                            <?php
+                            $rekapBidangParts = bidang_title_parts((string)$bidang);
+                            $rekapMainTitle = (string)($rekapBidangParts['main'] ?? (string)$bidang);
+                            if ($rekapMainTitle === '') {
+                                $rekapMainTitle = (string)$bidang;
+                            }
+                            $rekapCabangTitle = (string)($rekapBidangParts['cabang'] ?? '');
+                            ?>
+                            <article class="rekap-card" data-kandidat-card="1">
+                                <div class="rekap-head">
+                                    <h2 class="rekap-title">
+                                        <?= h($rekapMainTitle) ?>
+                                        <?php if ($rekapCabangTitle !== ''): ?>
+                                            <span class="rekap-title-sub"><?= h($rekapCabangTitle) ?></span>
+                                        <?php endif; ?>
+                                    </h2>
+                                    <p class="rekap-total"><?= h((string)$summary['total']) ?> vote</p>
+                                </div>
+                                <p class="top10-title">Top 10 Kandidat</p>
+                                <ul class="candidate-list">
+                                    <?php foreach ($summary['top_candidates'] as $index => $candidate): ?>
+                                        <?php
+                                        $candidateNama = (string)($candidate['nama'] ?? '-');
+                                        $candidateCabang = (string)($candidate['cabang'] ?? '-');
+                                        $candidateCount = (int)($candidate['count'] ?? 0);
+                                        $candidateFlagKey = flagging_candidate_key((string)$bidang, $candidateNama, $candidateCabang);
+                                        $candidateAnchorId = 'flag-' . substr($candidateFlagKey, 0, 18);
+                                        $candidateFlag = (array)($flaggingMap[$candidateFlagKey] ?? []);
+                                        $isLanjutProses = !empty($candidateFlag['lanjut_proses']);
+                                        $isLolosScreening = !empty($candidateFlag['lolos_screening']) && $isLanjutProses;
+                                        $candidateAssignment = (array)($interviewerAssignmentMap[$candidateFlagKey] ?? []);
+                                        $assignedInterviewerLogin = normalize_login_username((string)($candidateAssignment['interviewer_login_username'] ?? ''));
+                                        $assignedInterviewerLabel = '';
+                                        if ($assignedInterviewerLogin !== '' && isset($interviewerMapByLogin[$assignedInterviewerLogin])) {
+                                            $assignedInfo = (array)$interviewerMapByLogin[$assignedInterviewerLogin];
+                                            $assignedInterviewerLabel = (string)($assignedInfo['nama_lengkap'] ?? $assignedInterviewerLogin);
+                                            $assignedInterviewerCabang = trim((string)($assignedInfo['asal_cabang'] ?? ''));
+                                            if ($assignedInterviewerCabang !== '') {
+                                                $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
+                                            }
+                                        } else {
+                                            $assignedInterviewerName = normalize_username((string)($candidateAssignment['interviewer_nama_lengkap'] ?? ''));
+                                            $assignedInterviewerCabang = trim((string)($candidateAssignment['interviewer_asal_cabang'] ?? ''));
+                                            if ($assignedInterviewerName !== '') {
+                                                $assignedInterviewerLabel = $assignedInterviewerName;
+                                                if ($assignedInterviewerCabang !== '') {
+                                                    $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
+                                                }
+                                            } elseif ($assignedInterviewerLogin !== '') {
+                                                $assignedInterviewerLabel = $assignedInterviewerLogin;
+                                            }
+                                        }
+                                        $assignedInterviewerStatusText = $assignedInterviewerLogin !== '' ? 'Sudah di-assign' : 'Belum di-assign';
+                                        $assignedInterviewerTitleText = $assignedInterviewerLogin !== '' && $assignedInterviewerLabel !== ''
+                                            ? 'Pewawancara: ' . $assignedInterviewerLabel
+                                            : '';
+                                        $candidateForms = (array)($kesediaanFormMap[$candidateFlagKey] ?? []);
+                                        $candidateTotalFormCount = 0;
+                                        $candidateBersediaCount = 0;
+                                        foreach ($candidateForms as $candidateFormItemRaw) {
+                                            if (!is_array($candidateFormItemRaw)) {
+                                                continue;
+                                            }
+                                            $candidateFormStatus = normalize_kesediaan_status((string)($candidateFormItemRaw['status_kesediaan'] ?? ''));
+                                            if ($candidateFormStatus === '') {
+                                                continue;
+                                            }
+                                            $candidateTotalFormCount++;
+                                            if ($candidateFormStatus === 'bersedia') {
+                                                $candidateBersediaCount++;
+                                            }
+                                        }
+                                        $candidateKesediaanBadgeText = 'Belum Bersedia';
+                                        $candidateKesediaanBadgeClass = ' kesediaan-empty';
+                                        if ($candidateTotalFormCount > 0) {
+                                            $candidateKesediaanBadgeText = $candidateBersediaCount . '/' . $candidateTotalFormCount . ' bersedia';
+                                            $candidateKesediaanBadgeClass = $candidateBersediaCount >= $candidateTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
+                                        }
+                                        $canToggleCandidateLanjutProses = $isLanjutProses || $candidateTotalFormCount > 0;
+                                        $candidateScorecardSubmission = (array)($scorecardSubmissionMap[$candidateFlagKey] ?? []);
+                                        $candidateHasScorecard = $candidateScorecardSubmission !== [];
+                                        $isScorecardSubmitted = !empty($candidateScorecardSubmission['is_submitted']);
+                                        $candidateScorecardFinalScore = $candidateHasScorecard
+                                            ? round((float)($candidateScorecardSubmission['final_score'] ?? 0), 2)
+                                            : 0.0;
+                                        $candidateScorecardBadgeText = 'Skor Akhir: ' . ($candidateHasScorecard
+                                            ? number_format($candidateScorecardFinalScore, 2, '.', '')
+                                            : '0');
+                                        $candidateScorecardBadgeClass = $candidateHasScorecard ? ' scorecard-on' : ' scorecard-empty';
+                                        $screeningActionType = $isScorecardSubmitted ? 'scorecard_submit' : 'screening';
+                                        $screeningButtonClass = $isLolosScreening || $isScorecardSubmitted ? ' active-screening' : '';
+                                        $screeningButtonDisabled = !$isLanjutProses && !$isScorecardSubmitted;
+                                        $screeningButtonTitle = 'Status lanjut proses masih belum aktif.';
+                                        if ($isScorecardSubmitted) {
+                                            $screeningButtonTitle = 'Batalkan status submit score card kandidat ini agar dapat diedit lagi.';
+                                        } elseif ($isLolosScreening) {
+                                            $screeningButtonTitle = 'Batalkan status screening kandidat ini.';
+                                        } elseif ($isLanjutProses) {
+                                            $screeningButtonTitle = 'Tandai status screening kandidat ini.';
+                                        }
+                                        $screeningButtonLabel = $isScorecardSubmitted
+                                            ? 'Batal Submit Score Card'
+                                            : ($isLolosScreening ? 'Batal Screening' : 'Tandai Screening');
+                                        ?>
+                                        <li
+                                            class="candidate-item"
+                                            id="<?= h($candidateAnchorId) ?>"
+                                            data-process-assigned="<?= $assignedInterviewerLogin !== '' ? '1' : '0' ?>"
+                                            data-process-lanjut="<?= $isLanjutProses ? '1' : '0' ?>"
+                                            data-process-screening="<?= $isLolosScreening ? '1' : '0' ?>"
+                                            data-process-scorecard-submitted="<?= $isScorecardSubmitted ? '1' : '0' ?>"
+                                        >
+                                            <div class="candidate-main">
+                                                #<?= h((string)($index + 1)) ?> -
+                                                <?= h($candidateNama) ?>
+                                                (<?= h($candidateCabang) ?>)
+                                                - <?= h((string)$candidateCount) ?> suara
+                                            </div>
+                                            <div class="flag-state">
+                                                <?php if ($isLolosScreening): ?>
+                                                <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
+                                                    <?= h($candidateKesediaanBadgeText) ?>
+                                                </span>
+                                                <span class="flag-badge on screening-on">
+                                                    Lolos Screening
+                                                </span>
+                                                <span class="flag-badge<?= h($candidateScorecardBadgeClass) ?>">
+                                                    <?= h($candidateScorecardBadgeText) ?>
+                                                </span>
+                                                <?php elseif ($assignedInterviewerLogin === ''): ?>
+                                                <span
+                                                    class="flag-badge"
+                                                    <?= $assignedInterviewerTitleText !== '' ? 'title="' . h($assignedInterviewerTitleText) . '"' : '' ?>
+                                                >
+                                                    <?= h($assignedInterviewerStatusText) ?>
+                                                </span>
+                                                <?php elseif (!$isLanjutProses): ?>
+                                                <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
+                                                    <?= h($candidateKesediaanBadgeText) ?>
+                                                </span>
+                                                <span class="flag-badge">
+                                                    Belum Lanjut Proses
+                                                </span>
+                                                <?php else: ?>
+                                                <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
+                                                    <?= h($candidateKesediaanBadgeText) ?>
+                                                </span>
+                                                <span class="flag-badge on">
+                                                    Lanjut Proses
+                                                </span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="candidate-actions">
+                                                <form class="assign-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
+                                                    <input type="hidden" name="dashboard_action" value="assign_interviewer">
+                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                    <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
+                                                    <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
+                                                    <select
+                                                        class="assign-select"
+                                                        name="interviewer_login_username"
+                                                        onchange="this.form.submit()"
+                                                        <?= $interviewerUsers === [] ? 'disabled' : '' ?>
+                                                    >
+                                                        <option value="">Belum di-assign</option>
+                                                        <?php foreach ($interviewerUsers as $interviewerItem): ?>
+                                                            <?php
+                                                            $interviewerLogin = (string)($interviewerItem['login_username'] ?? '');
+                                                            $interviewerLabel = (string)($interviewerItem['nama_lengkap'] ?? $interviewerLogin);
+                                                            $interviewerCabang = trim((string)($interviewerItem['asal_cabang'] ?? ''));
+                                                            if ($interviewerCabang !== '') {
+                                                                $interviewerLabel .= ' (' . $interviewerCabang . ')';
+                                                            }
+                                                            ?>
+                                                            <option value="<?= h($interviewerLogin) ?>" <?= $assignedInterviewerLogin === $interviewerLogin ? 'selected' : '' ?>>
+                                                                <?= h($interviewerLabel) ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                </form>
+                                                <?php if (!$isLolosScreening): ?>
+                                                <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
+                                                    <input type="hidden" name="dashboard_action" value="toggle_candidate_flag">
+                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                    <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
+                                                    <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
+                                                    <button
+                                                        class="flag-btn<?= $isLanjutProses ? ' active-lanjut' : '' ?>"
+                                                        type="submit"
+                                                        name="flag_type"
+                                                        value="lanjut"
+                                                        <?= $canToggleCandidateLanjutProses ? '' : 'disabled' ?>
+                                                        title="<?= !$canToggleCandidateLanjutProses ? 'Tombol aktif setelah ada minimal 1 form kesediaan.' : ($isLanjutProses ? 'Batalkan status lanjut proses kandidat ini.' : 'Tandai kandidat ini sebagai lanjut proses.') ?>"
+                                                    >
+                                                        <?= $isLanjutProses ? 'Batalkan' : 'Lanjut Proses' ?>
+                                                    </button>
+                                                </form>
+                                                <?php endif; ?>
+                                                <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
+                                                    <input type="hidden" name="dashboard_action" value="toggle_candidate_flag">
+                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                    <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
+                                                    <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
+                                                    <button
+                                                        class="flag-btn<?= $screeningButtonClass ?>"
+                                                        type="submit"
+                                                        name="flag_type"
+                                                        value="<?= h($screeningActionType) ?>"
+                                                        <?= $screeningButtonDisabled ? 'disabled' : '' ?>
+                                                        title="<?= h($screeningButtonTitle) ?>"
+                                                    >
+                                                        <?= h($screeningButtonLabel) ?>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                            <?php if ($interviewerUsers === []): ?>
+                                                <p class="assign-note">Belum ada user dengan role pewawancara.</p>
+                                            <?php endif; ?>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                                <?php if ((int)($summary['candidate_total'] ?? 0) > 10): ?>
+                                    <p class="top10-note">
+                                        Menampilkan 10 dari <?= h((string)$summary['candidate_total']) ?> kandidat pada bidang ini.
+                                    </p>
+                                <?php endif; ?>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <?php endif; ?>
+
+                <?php if ($isDashboardPage): ?>
+                <section class="log-section">
+                    <h2 class="section-title">Log Vote</h2>
+                    <?php if ($voteLogs === []): ?>
+                        <p class="empty">Belum ada log vote.</p>
+                    <?php else: ?>
+                        <div class="table-wrap">
+                            <table class="log-table">
+                                <thead>
+                                    <tr>
+                                        <th>No</th>
+                                        <th>Waktu</th>
+                                        <th>User</th>
+                                        <th>Cabang User</th>
+                                        <th>Bidang</th>
+                                        <th>Kandidat</th>
+                                        <th>Cabang Kandidat</th>
+                                        <th>IP</th>
+                                        <th>Event</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($voteLogs as $idx => $log): ?>
+                                        <tr>
+                                            <td><?= h((string)($idx + 1)) ?></td>
+                                            <td class="mono"><?= h((string)($log['timestamp'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['username'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['asal_cabang_user'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['bidang'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['kandidat_nama'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['kandidat_cabang'] ?? '-')) ?></td>
+                                            <td class="mono"><?= h((string)($log['ip_address'] ?? '-')) ?></td>
+                                            <td><?= h((string)($log['event'] ?? '-')) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </section>
+                <?php endif; ?>
+            </section>
+        </main>
+        <script>
+            const kandidatProcessFilter = document.getElementById('kandidatProcessFilter');
+            const kandidatFilterEmpty = document.getElementById('kandidatFilterEmpty');
+
+            function buildKandidatFilterUrl(selectedFilter) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('page', 'kandidat');
+                if (selectedFilter && selectedFilter !== 'all') {
+                    url.searchParams.set('kandidat_filter', selectedFilter);
+                } else {
+                    url.searchParams.delete('kandidat_filter');
+                }
+                url.hash = '';
+                return url.toString();
+            }
+
+            function applyKandidatProcessFilter() {
+                if (!kandidatProcessFilter) {
+                    return;
+                }
+
+                const selectedFilter = String(kandidatProcessFilter.value || 'all').trim();
+
+                const candidateItems = document.querySelectorAll('.candidate-item[data-process-lanjut]');
+                const kandidatCards = document.querySelectorAll('.rekap-card[data-kandidat-card]');
+                let visibleCandidateCount = 0;
+
+                candidateItems.forEach(function (item) {
+                    const isAssigned = item.getAttribute('data-process-assigned') === '1';
+                    const isLanjut = item.getAttribute('data-process-lanjut') === '1';
+                    const isScreening = item.getAttribute('data-process-screening') === '1';
+                    const isScorecardSubmitted = item.getAttribute('data-process-scorecard-submitted') === '1';
+                    let shouldShow = true;
+
+                    if (selectedFilter === 'belum_assign') {
+                        shouldShow = !isAssigned;
+                    } else if (selectedFilter === 'belum_lanjut') {
+                        shouldShow = isAssigned && !isLanjut;
+                    } else if (selectedFilter === 'lanjut') {
+                        shouldShow = isLanjut && !isScreening;
+                    } else if (selectedFilter === 'screening') {
+                        shouldShow = isScreening && !isScorecardSubmitted;
+                    } else if (selectedFilter === 'scorecard_submitted') {
+                        shouldShow = isScorecardSubmitted;
+                    }
+
+                    item.style.display = shouldShow ? '' : 'none';
+                    if (shouldShow) {
+                        visibleCandidateCount++;
+                    }
+                });
+
+                kandidatCards.forEach(function (card) {
+                    const cardItems = card.querySelectorAll('.candidate-item[data-process-lanjut]');
+                    let hasVisibleItem = false;
+
+                    cardItems.forEach(function (item) {
+                        if (item.style.display !== 'none') {
+                            hasVisibleItem = true;
+                        }
+                    });
+
+                    card.style.display = hasVisibleItem ? '' : 'none';
+                });
+
+                if (kandidatFilterEmpty) {
+                    kandidatFilterEmpty.style.display = visibleCandidateCount > 0 ? 'none' : 'block';
+                }
+            }
+
+            if (kandidatProcessFilter) {
+                kandidatProcessFilter.addEventListener('change', function () {
+                    const selectedFilter = String(kandidatProcessFilter.value || 'all').trim();
+                    window.location.href = buildKandidatFilterUrl(selectedFilter);
+                });
+                applyKandidatProcessFilter();
+            }
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($page === 'wawancara') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+    if (!can_access_wawancara_role((string)$authUser['role'])) {
+        redirect_to_page('bidang', ['info' => 'wawancara-only']);
+    }
+
+    $wawancaraRole = normalize_role((string)$authUser['role']);
+    $isPewawancara = $wawancaraRole === 'pewawancara';
+    $wawancaraLoginUsername = normalize_login_username((string)($authUser['login_username'] ?? ''));
+    $wawancaraAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
+    $wawancaraProcessFilter = normalize_query_choice((string)($_GET['wawancara_filter'] ?? ''), $wawancaraAllowedProcessFilters, 'all');
+    $wawancaraPageParams = ['page' => 'wawancara'];
+    if ($wawancaraProcessFilter !== 'all') {
+        $wawancaraPageParams['wawancara_filter'] = $wawancaraProcessFilter;
+    }
+    $_SESSION['role'] = $wawancaraRole;
+    $wawancaraCsrfToken = csrf_token();
+    $wawancaraSuccessMessage = '';
+    $wawancaraErrorMessage = '';
+    $wawancaraAction = trim((string)($_POST['wawancara_action'] ?? ''));
+    $wawancaraVotesRaw = load_pemilihan_data();
+    $wawancaraVoteItems = $wawancaraVotesRaw['pemilihan'] ?? [];
+    if (!is_array($wawancaraVoteItems)) {
+        $wawancaraVoteItems = [];
+    }
+    $wawancaraFlagMap = load_flagging_map();
+    $wawancaraAssignmentMap = load_wawancara_assignment_map();
+    $wawancaraKesediaanFormMap = load_kesediaan_form_map();
+    $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
+    $wawancaraEmptyMessage = $isPewawancara
+        ? 'Belum ada kandidat Top 10 yang di-assign ke Anda.'
+        : 'Belum ada kandidat Top 10 yang di-assign ke pewawancara.';
+
+    $wawancaraBidangSummary = [];
+    foreach ($wawancaraVoteItems as $voteItem) {
+        if (!is_array($voteItem)) {
+            continue;
+        }
+
+        $bidang = trim((string)($voteItem['bidang'] ?? '-'));
+        if ($bidang === '') {
+            $bidang = '-';
+        }
+
+        $candidateName = trim((string)($voteItem['kandidat']['nama_lengkap'] ?? '-'));
+        if ($candidateName === '') {
+            $candidateName = '-';
+        }
+        $candidateCabang = trim((string)($voteItem['kandidat']['asal_cabang'] ?? '-'));
+        if ($candidateCabang === '') {
+            $candidateCabang = '-';
+        }
+
+        if (!isset($wawancaraBidangSummary[$bidang])) {
+            $wawancaraBidangSummary[$bidang] = [
+                'total' => 0,
+                'candidates' => [],
+            ];
+        }
+
+        $wawancaraBidangSummary[$bidang]['total']++;
+        $candidateKey = $candidateName . '||' . $candidateCabang;
+        if (!isset($wawancaraBidangSummary[$bidang]['candidates'][$candidateKey])) {
+            $wawancaraBidangSummary[$bidang]['candidates'][$candidateKey] = [
+                'nama' => $candidateName,
+                'cabang' => $candidateCabang,
+                'count' => 0,
+            ];
+        }
+        $wawancaraBidangSummary[$bidang]['candidates'][$candidateKey]['count']++;
+    }
+
+    foreach ($wawancaraBidangSummary as $bidang => $summary) {
+        uasort($summary['candidates'], static function (array $a, array $b): int {
+            $countCompare = ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0));
+            if ($countCompare !== 0) {
+                return $countCompare;
+            }
+            return strcmp((string)($a['nama'] ?? ''), (string)($b['nama'] ?? ''));
+        });
+        $sortedCandidates = array_values($summary['candidates']);
+        $topCandidates = array_slice($sortedCandidates, 0, 10);
+        $assignedTopCandidates = [];
+        foreach ($topCandidates as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            $candidateNama = trim((string)($candidate['nama'] ?? ''));
+            $candidateCabang = trim((string)($candidate['cabang'] ?? ''));
+            if ($candidateNama === '' || $candidateCabang === '') {
+                continue;
+            }
+
+            $flagKey = flagging_candidate_key((string)$bidang, $candidateNama, $candidateCabang);
+            $assignment = (array)($wawancaraAssignmentMap[$flagKey] ?? []);
+            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
+            if ($assignedInterviewerLogin === '') {
+                continue;
+            }
+            if ($isPewawancara) {
+                if ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername)) {
+                    continue;
+                }
+            }
+
+            $assignedTopCandidates[] = $candidate;
+        }
+
+        $wawancaraBidangSummary[$bidang]['candidates'] = $sortedCandidates;
+        $wawancaraBidangSummary[$bidang]['candidate_total'] = count($sortedCandidates);
+        $wawancaraBidangSummary[$bidang]['top_candidates'] = $assignedTopCandidates;
+    }
+
+    $orderedWawancaraBidangSummary = [];
+    $orderedAssigned = [];
+    $bidangOrder = load_bidang_data();
+    $cabangOrderMap = [];
+    foreach (known_cabang_values() as $idx => $cabangItem) {
+        $cabangKey = normalize_header_key((string)$cabangItem);
+        if ($cabangKey !== '' && !isset($cabangOrderMap[$cabangKey])) {
+            $cabangOrderMap[$cabangKey] = (int)$idx;
+        }
+    }
+
+    foreach ($bidangOrder as $bidangItem) {
+        if (!is_array($bidangItem)) {
+            continue;
+        }
+
+        $orderTitle = trim((string)($bidangItem['title'] ?? ''));
+        if ($orderTitle === '') {
+            continue;
+        }
+
+        if (is_ketua_pengurus_lokal_bidang($orderTitle)) {
+            $kplTitles = [];
+            foreach ($wawancaraBidangSummary as $summaryTitle => $_summaryValue) {
+                if (isset($orderedAssigned[$summaryTitle])) {
+                    continue;
+                }
+                if (is_ketua_pengurus_lokal_bidang((string)$summaryTitle)) {
+                    $kplTitles[] = (string)$summaryTitle;
+                }
+            }
+
+            usort($kplTitles, static function (string $a, string $b) use ($cabangOrderMap): int {
+                $cabangA = normalize_header_key(extract_ketua_pengurus_lokal_cabang($a));
+                $cabangB = normalize_header_key(extract_ketua_pengurus_lokal_cabang($b));
+                $idxA = $cabangOrderMap[$cabangA] ?? PHP_INT_MAX;
+                $idxB = $cabangOrderMap[$cabangB] ?? PHP_INT_MAX;
+                if ($idxA !== $idxB) {
+                    return $idxA <=> $idxB;
+                }
+                return strnatcasecmp($a, $b);
+            });
+
+            foreach ($kplTitles as $kplTitle) {
+                $orderedWawancaraBidangSummary[$kplTitle] = $wawancaraBidangSummary[$kplTitle];
+                $orderedAssigned[$kplTitle] = true;
+            }
+            continue;
+        }
+
+        if (!isset($orderedAssigned[$orderTitle]) && isset($wawancaraBidangSummary[$orderTitle])) {
+            $orderedWawancaraBidangSummary[$orderTitle] = $wawancaraBidangSummary[$orderTitle];
+            $orderedAssigned[$orderTitle] = true;
+        }
+    }
+
+    $remainingTitles = [];
+    foreach ($wawancaraBidangSummary as $summaryTitle => $_summaryValue) {
+        if (!isset($orderedAssigned[$summaryTitle])) {
+            $remainingTitles[] = (string)$summaryTitle;
+        }
+    }
+    natcasesort($remainingTitles);
+    foreach ($remainingTitles as $remainingTitle) {
+        $orderedWawancaraBidangSummary[$remainingTitle] = $wawancaraBidangSummary[$remainingTitle];
+    }
+    $wawancaraBidangSummary = array_filter(
+        $orderedWawancaraBidangSummary,
+        static function (array $summary): bool {
+            return (array)($summary['top_candidates'] ?? []) !== [];
+        }
+    );
+
+    if ($method === 'POST' && $wawancaraAction === 'mark_lanjut_proses') {
+        $wawancaraErrorMessage = 'Perubahan status lanjut proses dilakukan dari halaman kandidat admin.';
+    }
+
+    if ($method === 'POST' && $wawancaraAction === 'save_kesediaan_form') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+        $hubungan = trim((string)($_POST['hubungan'] ?? ''));
+        $namaPihak = trim((string)($_POST['nama_pihak'] ?? ''));
+        $statusKesediaan = trim((string)($_POST['status_kesediaan'] ?? ''));
+        $alasan = trim((string)($_POST['alasan'] ?? ''));
+        $uploadedFile = $_FILES['kesediaan_file'] ?? null;
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $wawancaraErrorMessage = 'Sesi tidak valid. Muat ulang halaman lalu coba lagi.';
+        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $wawancaraErrorMessage = 'Data kandidat tidak valid untuk form kesediaan.';
+        } elseif (!is_array($uploadedFile)) {
+            $wawancaraErrorMessage = 'File dokumen kesediaan wajib diupload.';
+        } else {
+            $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
+            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
+            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
+            $assignedInterviewerName = normalize_username((string)($assignment['interviewer_nama_lengkap'] ?? ''));
+            $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
+            $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
+
+            if ($assignedInterviewerLogin === '') {
+                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
+            } elseif ($isCandidateLanjutProses) {
+                $wawancaraErrorMessage = 'Kandidat ini sudah lanjut proses. Form kesediaan tidak dapat diinput lagi.';
+            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
+                $wawancaraErrorMessage = 'Anda tidak memiliki akses form kesediaan untuk kandidat ini.';
+            } else {
+                if ($assignedInterviewerName === '') {
+                    $assignedInterviewerName = (string)$authUser['username'];
+                }
+
+                $saveResult = save_kesediaan_form_submission(
+                    $targetBidang,
+                    $targetKandidatNama,
+                    $targetKandidatCabang,
+                    $hubungan,
+                    $namaPihak,
+                    $statusKesediaan,
+                    $alasan,
+                    $uploadedFile,
+                    $assignedInterviewerLogin,
+                    $assignedInterviewerName,
+                    (string)$authUser['username']
+                );
+
+                if (!($saveResult['ok'] ?? false)) {
+                    $wawancaraErrorMessage = (string)($saveResult['message'] ?? 'Gagal menyimpan form kesediaan.');
+                } else {
+                    $wawancaraSuccessMessage = (string)($saveResult['message'] ?? 'Form kesediaan berhasil disimpan.');
+                    $wawancaraKesediaanFormMap = load_kesediaan_form_map();
+                }
+            }
+        }
+    }
+
+    if ($method === 'POST' && $wawancaraAction === 'save_scorecard') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+        $interviewDate = trim((string)($_POST['scorecard_interview_date'] ?? ''));
+        $location = trim((string)($_POST['scorecard_location'] ?? ''));
+        $rawAnswers = $_POST['scorecard_answers'] ?? [];
+        $rawSectionNotes = $_POST['scorecard_section_notes'] ?? [];
+        $interviewerDecision = trim((string)($_POST['scorecard_interviewer_decision'] ?? ''));
+        $decisionNote = trim((string)($_POST['scorecard_decision_note'] ?? ''));
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $wawancaraErrorMessage = 'Sesi tidak valid. Muat ulang halaman lalu coba lagi.';
+        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $wawancaraErrorMessage = 'Data kandidat tidak valid untuk score card.';
+        } elseif (!is_array($rawAnswers) || !is_array($rawSectionNotes)) {
+            $wawancaraErrorMessage = 'Data score card tidak valid.';
+        } else {
+            $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
+            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
+            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
+            $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
+            $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
+            $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
+
+            if ($assignedInterviewerLogin === '') {
+                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
+            } elseif (!$isCandidateLolosScreening) {
+                $wawancaraErrorMessage = 'Score card hanya dapat diisi untuk kandidat yang sudah lolos screening.';
+            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
+                $wawancaraErrorMessage = 'Anda tidak memiliki akses score card untuk kandidat ini.';
+            } else {
+                $saveResult = save_scorecard_submission(
+                    $targetBidang,
+                    $targetKandidatNama,
+                    $targetKandidatCabang,
+                    $interviewDate,
+                    $location,
+                    $rawAnswers,
+                    $rawSectionNotes,
+                    $interviewerDecision,
+                    $decisionNote,
+                    (string)($authUser['login_username'] ?? ''),
+                    (string)($authUser['username'] ?? ''),
+                    (string)($authUser['username'] ?? '')
+                );
+
+                if (!($saveResult['ok'] ?? false)) {
+                    $wawancaraErrorMessage = (string)($saveResult['message'] ?? 'Gagal menyimpan score card.');
+                } else {
+                    $wawancaraSuccessMessage = (string)($saveResult['message'] ?? 'Score card berhasil disimpan.');
+                    $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
+                }
+            }
+        }
+    }
+
+    if ($method === 'POST' && $wawancaraAction === 'submit_scorecard') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $wawancaraErrorMessage = 'Sesi tidak valid. Muat ulang halaman lalu coba lagi.';
+        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $wawancaraErrorMessage = 'Data kandidat tidak valid untuk submit score card.';
+        } else {
+            $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
+            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
+            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
+            $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
+            $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
+            $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
+
+            if ($assignedInterviewerLogin === '') {
+                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
+            } elseif (!$isCandidateLolosScreening) {
+                $wawancaraErrorMessage = 'Submit score card hanya dapat dilakukan untuk kandidat yang sudah lolos screening.';
+            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
+                $wawancaraErrorMessage = 'Anda tidak memiliki akses score card untuk kandidat ini.';
+            } else {
+                $submitResult = submit_scorecard_submission(
+                    $targetBidang,
+                    $targetKandidatNama,
+                    $targetKandidatCabang,
+                    (string)($authUser['username'] ?? '')
+                );
+
+                if (!($submitResult['ok'] ?? false)) {
+                    $wawancaraErrorMessage = (string)($submitResult['message'] ?? 'Gagal submit score card.');
+                } else {
+                    $wawancaraSuccessMessage = (string)($submitResult['message'] ?? 'Score card berhasil disubmit.');
+                    $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
+                }
+            }
+        }
+    }
+
+    $wawancaraScorecardTemplatesByBidang = [];
+    foreach ($wawancaraBidangSummary as $bidang => $_summary) {
+        $resolvedTemplate = find_scorecard_template_for_bidang((string)$bidang);
+        if ($resolvedTemplate === null) {
+            continue;
+        }
+        $wawancaraScorecardTemplatesByBidang[(string)$bidang] = scorecard_template_client_payload($resolvedTemplate);
+    }
+    $wawancaraScorecardTemplatesJsonRaw = json_encode($wawancaraScorecardTemplatesByBidang, JSON_UNESCAPED_UNICODE);
+    if (!is_string($wawancaraScorecardTemplatesJsonRaw)) {
+        $wawancaraScorecardTemplatesJsonRaw = '{}';
+    }
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Wawancara</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                min-height: 100vh;
+                font-family: Arial, sans-serif;
+                background: #f3f4f6;
+                color: #111827;
+                padding: 24px 16px;
+            }
+            .wrap {
+                width: 100%;
+                max-width: 1060px;
+                margin: 0 auto;
+            }
+            .card {
+                background: #fff;
+                border: 1px solid #e5e7eb;
+                border-radius: 14px;
+                padding: 22px;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+            }
+            .topbar {
+                display: flex;
+                gap: 16px;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 18px;
+            }
+            h1 {
+                margin: 0;
+                font-size: 28px;
+                line-height: 1.2;
+                text-align: left;
+            }
+            .subtitle {
+                margin: 8px 0 0;
+                color: #4b5563;
+                font-size: 14px;
+                line-height: 1.6;
+                text-align: left;
+            }
+            .top-actions {
+                display: flex;
+                justify-content: flex-end;
+            }
+            .wawancara-filter-bar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+                margin: 0 0 14px;
+                padding: 10px 12px;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                background: #f8fafc;
+            }
+            .wawancara-filter-label {
+                margin: 0;
+                color: #334155;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .wawancara-filter-select {
+                min-width: 220px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #0f172a;
+                padding: 8px 10px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            .wawancara-filter-select:focus-visible,
+            .doc-icon-btn:focus-visible,
+            .doc-scorecard-submit-btn:focus-visible,
+            .doc-modal-close:focus-visible,
+            .doc-modal-submit:focus-visible,
+            .doc-field-input:focus-visible,
+            .doc-field-select:focus-visible,
+            .doc-field-textarea:focus-visible {
+                outline: 3px solid #bfdbfe;
+                outline-offset: 2px;
+            }
+            .wawancara-filter-empty {
+                display: none;
+                margin: 0 0 14px;
+                padding: 12px;
+                border: 1px dashed #cbd5e1;
+                border-radius: 10px;
+                background: #f8fafc;
+                color: #64748b;
+                font-size: 13px;
+            }
+            .btn-back {
+                display: inline-block;
+                text-decoration: none;
+                background: #111827;
+                color: #fff;
+                padding: 10px 16px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                border: 0;
+            }
+            .btn-back:hover {
+                background: #0f172a;
+            }
+            .rekap-grid {
+                display: grid;
+                gap: 12px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .rekap-card {
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                padding: 14px;
+                background: #fff;
+            }
+            .rekap-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .rekap-title {
+                margin: 0;
+                font-size: 18px;
+            }
+            .rekap-title-sub {
+                display: block;
+                margin-top: 3px;
+                font-size: 12px;
+                font-weight: 700;
+                color: #64748b;
+            }
+            .rekap-total {
+                margin: 0;
+                font-size: 13px;
+                color: #475569;
+                font-weight: 700;
+            }
+            .top10-title {
+                margin: 0 0 8px;
+                font-size: 13px;
+                color: #475569;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+            }
+            .candidate-list {
+                margin: 0;
+                padding: 0;
+                list-style: none;
+                color: #334155;
+                display: grid;
+                gap: 10px;
+            }
+            .candidate-item {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #f8fafc;
+                padding: 10px;
+            }
+            .candidate-main {
+                color: #1e293b;
+                font-size: 14px;
+                font-weight: 600;
+                line-height: 1.5;
+            }
+            .flag-state {
+                margin-top: 6px;
+                display: flex;
+                gap: 6px;
+                flex-wrap: wrap;
+            }
+            .candidate-doc-action {
+                margin-top: 8px;
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .doc-icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                min-width: 34px;
+                height: 32px;
+                padding: 0 10px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #334155;
+                font-size: 13px;
+                line-height: 1;
+                cursor: pointer;
+                font-weight: 700;
+                transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            }
+            .doc-icon-btn:hover {
+                background: #f8fafc;
+            }
+            .doc-icon-btn:disabled {
+                opacity: 1;
+                cursor: not-allowed;
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .doc-icon-btn.secondary {
+                background: #eef2ff;
+                border-color: #c7d2fe;
+                color: #3730a3;
+            }
+            .doc-icon-btn.secondary:hover {
+                background: #e0e7ff;
+            }
+            .doc-icon-btn.secondary:disabled {
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .doc-icon {
+                font-size: 16px;
+                line-height: 1;
+            }
+            .doc-label {
+                white-space: nowrap;
+            }
+            .doc-action-form {
+                margin: 0;
+                display: inline-flex;
+            }
+            .doc-scorecard-submit-btn {
+                border: 1px solid #1d4ed8;
+                border-radius: 8px;
+                background: #dbeafe;
+                color: #1d4ed8;
+                padding: 0 10px;
+                height: 32px;
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+                white-space: nowrap;
+                transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            }
+            .doc-scorecard-submit-btn:hover {
+                background: #bfdbfe;
+            }
+            .doc-scorecard-submit-btn:disabled {
+                opacity: 1;
+                cursor: not-allowed;
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .flag-badge {
+                display: inline-block;
+                padding: 2px 7px;
+                border-radius: 999px;
+                border: 1px solid #cbd5e1;
+                background: #f1f5f9;
+                color: #475569;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .flag-badge.on {
+                border-color: #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .flag-badge.screening-on {
+                border-color: #a5b4fc;
+                background: #e0e7ff;
+                color: #3730a3;
+            }
+            .flag-badge.interviewer-on {
+                border-color: #7dd3fc;
+                background: #e0f2fe;
+                color: #075985;
+            }
+            .flag-badge.kesediaan-empty {
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #475569;
+            }
+            .flag-badge.kesediaan-progress {
+                border-color: #93c5fd;
+                background: #dbeafe;
+                color: #1e3a8a;
+            }
+            .flag-badge.kesediaan-complete {
+                border-color: #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .flag-badge.scorecard-empty {
+                border-color: #cbd5e1;
+                background: #f1f5f9;
+                color: #64748b;
+            }
+            .flag-badge.scorecard-on {
+                border-color: #fcd34d;
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .wawancara-alert {
+                margin: 0 0 14px;
+                border-radius: 8px;
+                padding: 10px 12px;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .wawancara-alert.success {
+                border: 1px solid #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .wawancara-alert.error {
+                border: 1px solid #fecaca;
+                background: #fee2e2;
+                color: #b91c1c;
+            }
+            .empty {
+                margin: 0;
+                padding: 12px;
+                border: 1px dashed #cbd5e1;
+                border-radius: 10px;
+                color: #64748b;
+                background: #f8fafc;
+            }
+            .doc-modal {
+                position: fixed;
+                inset: 0;
+                display: none;
+                align-items: flex-start;
+                justify-content: center;
+                padding: 16px;
+                overflow-y: auto;
+                background: rgba(15, 23, 42, 0.45);
+                z-index: 1000;
+            }
+            .doc-modal.open {
+                display: flex;
+            }
+            #candidateDocModal {
+                align-items: center;
+            }
+            #candidateViewModal {
+                align-items: center;
+            }
+            #candidateScoreCardModal {
+                align-items: center;
+            }
+            .doc-modal-panel {
+                width: 100%;
+                max-width: 540px;
+                max-height: calc(100vh - 32px);
+                overflow-y: auto;
+                background: #ffffff;
+                border-radius: 12px;
+                border: 1px solid #cbd5e1;
+                padding: 16px;
+                box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+            }
+            .doc-modal-panel.view {
+                max-width: 760px;
+            }
+            .doc-modal-panel.scorecard {
+                max-width: 980px;
+            }
+            .doc-modal-title {
+                margin: 0 0 10px;
+                color: #0f172a;
+                font-size: 20px;
+            }
+            .doc-modal-text {
+                margin: 0 0 12px;
+                color: #334155;
+                line-height: 1.5;
+            }
+            .doc-modal-form {
+                display: grid;
+                gap: 10px;
+            }
+            .doc-field {
+                display: grid;
+                gap: 6px;
+            }
+            .doc-field-label {
+                color: #334155;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .doc-field-input,
+            .doc-field-select {
+                width: 100%;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #fff;
+                color: #0f172a;
+                padding: 8px 10px;
+                font-size: 13px;
+            }
+            .doc-field-textarea {
+                width: 100%;
+                min-height: 88px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #fff;
+                color: #0f172a;
+                padding: 8px 10px;
+                font-size: 13px;
+                line-height: 1.5;
+                resize: vertical;
+                font-family: inherit;
+            }
+            .doc-check-group {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+            .doc-check-item {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 13px;
+                color: #1e293b;
+                font-weight: 600;
+            }
+            .doc-modal-actions {
+                margin-top: 14px;
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+            }
+            .doc-modal-close {
+                border: 1px solid #94a3b8;
+                border-radius: 8px;
+                background: #f8fafc;
+                color: #0f172a;
+                padding: 8px 12px;
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            }
+            .doc-modal-close:hover {
+                background: #e2e8f0;
+            }
+            .doc-modal-submit {
+                border: 1px solid #1d4ed8;
+                border-radius: 8px;
+                background: #2563eb;
+                color: #ffffff;
+                padding: 8px 12px;
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            }
+            .doc-modal-submit:hover {
+                background: #1d4ed8;
+            }
+            .doc-view-empty {
+                margin: 0;
+                padding: 10px 12px;
+                border-radius: 8px;
+                border: 1px dashed #cbd5e1;
+                background: #f8fafc;
+                color: #64748b;
+                font-size: 13px;
+            }
+            .doc-view-recap {
+                margin: 0 0 10px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                border: 1px solid #dbeafe;
+                background: #f8fafc;
+            }
+            .doc-view-recap-title {
+                margin: 0 0 8px;
+                font-size: 12px;
+                color: #1e3a8a;
+                font-weight: 800;
+                letter-spacing: 0.02em;
+                text-transform: uppercase;
+            }
+            .doc-view-recap-table-wrap {
+                border: 1px solid #dbeafe;
+                border-radius: 8px;
+                overflow: auto;
+                background: #f8fafc;
+            }
+            .doc-view-recap-table {
+                width: 100%;
+                border-collapse: collapse;
+                min-width: 620px;
+                font-size: 12px;
+            }
+            .doc-view-recap-table th,
+            .doc-view-recap-table td {
+                padding: 8px 9px;
+                border-bottom: 1px solid #e2e8f0;
+                text-align: left;
+                vertical-align: top;
+                line-height: 1.4;
+                color: #1e293b;
+            }
+            .doc-view-recap-table th {
+                position: sticky;
+                top: 0;
+                z-index: 1;
+                background: #f1f5f9;
+                color: #334155;
+                font-weight: 800;
+            }
+            .doc-view-recap-table tbody tr:last-child td {
+                border-bottom: 0;
+            }
+            .doc-view-link {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                color: #1d4ed8;
+                text-decoration: none;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .doc-view-link:hover {
+                text-decoration: underline;
+            }
+            .doc-view-link-group {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+                margin-top: 4px;
+            }
+            .doc-modal-form.scorecard-form {
+                gap: 14px;
+            }
+            .scorecard-scale-box,
+            .scorecard-template-state,
+            .scorecard-ranges {
+                border: 1px solid #dbe3ef;
+                border-radius: 10px;
+                background: #f8fafc;
+                padding: 12px;
+            }
+            .scorecard-scale-title,
+            .scorecard-range-title {
+                margin: 0 0 8px;
+                color: #0f172a;
+                font-size: 13px;
+                font-weight: 800;
+            }
+            .scorecard-scale-list,
+            .scorecard-range-list {
+                margin: 0;
+                padding-left: 18px;
+                color: #334155;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .scorecard-meta-grid {
+                display: grid;
+                gap: 12px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .scorecard-template-state {
+                color: #64748b;
+                font-size: 13px;
+            }
+            .scorecard-template-state.error {
+                border-color: #fecaca;
+                background: #fef2f2;
+                color: #b91c1c;
+            }
+            .scorecard-section-list {
+                display: grid;
+                gap: 14px;
+            }
+            .scorecard-section {
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                background: #ffffff;
+                padding: 14px;
+            }
+            .scorecard-section-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 12px;
+                margin-bottom: 12px;
+            }
+            .scorecard-section-title {
+                margin: 0;
+                color: #0f172a;
+                font-size: 17px;
+                font-weight: 800;
+            }
+            .scorecard-section-focus {
+                margin: 6px 0 0;
+                color: #475569;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .scorecard-section-weight {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                background: #e0e7ff;
+                color: #3730a3;
+                font-size: 12px;
+                font-weight: 800;
+                white-space: nowrap;
+            }
+            .scorecard-question-list {
+                display: grid;
+                gap: 12px;
+            }
+            .scorecard-question {
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                background: #f8fafc;
+                padding: 12px;
+            }
+            .scorecard-question-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+            .scorecard-question-title {
+                margin: 0;
+                color: #0f172a;
+                font-size: 14px;
+                font-weight: 700;
+                line-height: 1.5;
+            }
+            .scorecard-score-group {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+            .scorecard-score-option {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 5px 8px;
+                border: 1px solid #cbd5e1;
+                border-radius: 999px;
+                background: #fff;
+                color: #1e293b;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .scorecard-score-option input {
+                margin: 0;
+            }
+            .scorecard-indicators {
+                display: grid;
+                gap: 10px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .scorecard-indicator {
+                border-radius: 10px;
+                padding: 10px;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .scorecard-indicator.low {
+                border: 1px solid #fecaca;
+                background: #fef2f2;
+                color: #991b1b;
+            }
+            .scorecard-indicator.high {
+                border: 1px solid #bbf7d0;
+                background: #f0fdf4;
+                color: #166534;
+            }
+            .scorecard-indicator-title {
+                margin: 0 0 6px;
+                font-size: 12px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+            }
+            .scorecard-indicator ul {
+                margin: 0;
+                padding-left: 18px;
+            }
+            .scorecard-indicator li + li {
+                margin-top: 4px;
+            }
+            .scorecard-section-summary,
+            .scorecard-final-grid {
+                display: grid;
+                gap: 10px;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+            .scorecard-summary-item,
+            .scorecard-final-card {
+                border: 1px solid #dbe3ef;
+                border-radius: 10px;
+                background: #f8fafc;
+                padding: 10px 12px;
+            }
+            .scorecard-summary-label,
+            .scorecard-final-label {
+                display: block;
+                color: #64748b;
+                font-size: 12px;
+                font-weight: 700;
+                margin-bottom: 4px;
+            }
+            .scorecard-summary-value,
+            .scorecard-final-value {
+                display: block;
+                color: #0f172a;
+                font-size: 18px;
+                font-weight: 800;
+                line-height: 1.2;
+            }
+            .scorecard-final-card.highlight {
+                border-color: #93c5fd;
+                background: #eff6ff;
+            }
+            .scorecard-range-list {
+                display: grid;
+                gap: 6px;
+                padding-left: 18px;
+            }
+            .scorecard-range-item.active {
+                color: #1d4ed8;
+                font-weight: 800;
+            }
+            .scorecard-save-note {
+                margin: 0;
+                color: #64748b;
+                font-size: 12px;
+            }
+            .scorecard-hidden {
+                display: none !important;
+            }
+            @media (max-width: 820px) {
+                .rekap-grid {
+                    grid-template-columns: 1fr;
+                }
+                .scorecard-meta-grid,
+                .scorecard-indicators,
+                .scorecard-section-summary,
+                .scorecard-final-grid {
+                    grid-template-columns: 1fr;
+                }
+                .scorecard-question-head,
+                .scorecard-section-head {
+                    flex-direction: column;
+                }
+                .scorecard-score-group {
+                    justify-content: flex-start;
+                }
+            }
+            @media (max-width: 640px) {
+                .card {
+                    padding: 18px;
+                }
+                h1 {
+                    font-size: 22px;
+                }
+                .top-actions {
+                    width: 100%;
+                }
+                .btn-back {
+                    width: 100%;
+                    text-align: center;
+                }
+                .wawancara-filter-bar {
+                    align-items: stretch;
+                }
+                .wawancara-filter-select {
+                    width: 100%;
+                    min-width: 0;
+                }
+                .doc-modal {
+                    padding: 10px;
+                }
+                .doc-modal-panel {
+                    width: 100%;
+                    max-width: 540px;
+                    max-height: calc(100vh - 20px);
+                    padding: 12px;
+                }
+                .doc-modal-panel.scorecard {
+                    max-width: 980px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main class="wrap">
+            <section class="card">
+                <div class="topbar">
+                    <div>
+                        <h1>Halaman Wawancara</h1>
+                    </div>
+                    <div class="top-actions">
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                    </div>
+                </div>
+                <?php if ($wawancaraSuccessMessage !== ''): ?>
+                    <div class="wawancara-alert success"><?= h($wawancaraSuccessMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($wawancaraErrorMessage !== ''): ?>
+                    <div class="wawancara-alert error"><?= h($wawancaraErrorMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($wawancaraBidangSummary === []): ?>
+                    <p class="empty"><?= h($wawancaraEmptyMessage) ?></p>
+                <?php else: ?>
+                    <div class="wawancara-filter-bar">
+                        <p class="wawancara-filter-label">Filter proses kandidat</p>
+                        <select class="wawancara-filter-select" id="wawancaraProcessFilter" aria-label="Filter proses kandidat">
+                            <option value="all" <?= $wawancaraProcessFilter === 'all' ? 'selected' : '' ?>>Semua</option>
+                            <option value="belum_lanjut" <?= $wawancaraProcessFilter === 'belum_lanjut' ? 'selected' : '' ?>>Belum Lanjut Proses</option>
+                            <option value="lanjut" <?= $wawancaraProcessFilter === 'lanjut' ? 'selected' : '' ?>>Lanjut Proses</option>
+                            <option value="screening" <?= $wawancaraProcessFilter === 'screening' ? 'selected' : '' ?>>Lolos Screening</option>
+                            <option value="scorecard_submitted" <?= $wawancaraProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?>>Sudah Submit Score Card</option>
+                        </select>
+                    </div>
+                    <div class="wawancara-filter-empty" id="wawancaraFilterEmpty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
+                    <div class="rekap-grid">
+                        <?php foreach ($wawancaraBidangSummary as $bidang => $summary): ?>
+                            <?php
+                            $wawancaraBidangParts = bidang_title_parts((string)$bidang);
+                            $wawancaraMainTitle = (string)($wawancaraBidangParts['main'] ?? (string)$bidang);
+                                if ($wawancaraMainTitle === '') {
+                                    $wawancaraMainTitle = (string)$bidang;
+                                }
+                                $wawancaraCabangTitle = (string)($wawancaraBidangParts['cabang'] ?? '');
+                            ?>
+                            <article class="rekap-card" data-wawancara-card="1">
+                                <div class="rekap-head">
+                                    <h2 class="rekap-title">
+                                        <?= h($wawancaraMainTitle) ?>
+                                        <?php if ($wawancaraCabangTitle !== ''): ?>
+                                            <span class="rekap-title-sub"><?= h($wawancaraCabangTitle) ?></span>
+                                        <?php endif; ?>
+                                    </h2>
+                                    <p class="rekap-total"><?= h((string)($summary['total'] ?? 0)) ?> vote</p>
+                                </div>
+                                <?php if ((array)($summary['top_candidates'] ?? []) === []): ?>
+                                    <p class="empty">Belum ada kandidat pada bidang ini.</p>
+                                <?php else: ?>
+                                    <ul class="candidate-list">
+                                        <?php foreach ((array)($summary['top_candidates'] ?? []) as $index => $candidate): ?>
+                                            <?php
+                                            $wawancaraCandidateName = (string)($candidate['nama'] ?? '-');
+                                            $wawancaraCandidateCabang = (string)($candidate['cabang'] ?? '-');
+                                            $wawancaraCandidateCount = (int)($candidate['count'] ?? 0);
+                                            $wawancaraCandidateKey = flagging_candidate_key((string)$bidang, $wawancaraCandidateName, $wawancaraCandidateCabang);
+                                            $wawancaraCandidateFlag = (array)($wawancaraFlagMap[$wawancaraCandidateKey] ?? []);
+                                            $isWawancaraLanjut = !empty($wawancaraCandidateFlag['lanjut_proses']);
+                                            $isWawancaraScreening = !empty($wawancaraCandidateFlag['lolos_screening']) && $isWawancaraLanjut;
+                                            $wawancaraCandidateForms = (array)($wawancaraKesediaanFormMap[$wawancaraCandidateKey] ?? []);
+                                            $wawancaraTotalFormCount = 0;
+                                            $wawancaraBersediaCount = 0;
+                                            foreach ($wawancaraCandidateForms as $wawancaraKesediaanItemRaw) {
+                                                if (!is_array($wawancaraKesediaanItemRaw)) {
+                                                    continue;
+                                                }
+                                                $wawancaraKesediaanStatus = normalize_kesediaan_status((string)($wawancaraKesediaanItemRaw['status_kesediaan'] ?? ''));
+                                                if ($wawancaraKesediaanStatus === '') {
+                                                    continue;
+                                                }
+                                                $wawancaraTotalFormCount++;
+                                                if ($wawancaraKesediaanStatus === 'bersedia') {
+                                                    $wawancaraBersediaCount++;
+                                                }
+                                            }
+                                            $wawancaraFormExists = $wawancaraTotalFormCount > 0;
+                                            $wawancaraKesediaanBadgeText = 'Belum Bersedia';
+                                            $wawancaraKesediaanBadgeClass = ' kesediaan-empty';
+                                            if ($wawancaraFormExists) {
+                                                $wawancaraKesediaanBadgeText = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' bersedia';
+                                                $wawancaraKesediaanBadgeClass = $wawancaraBersediaCount >= $wawancaraTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
+                                            }
+                                            $canInputKesediaanForm = !$isWawancaraLanjut;
+                                            $wawancaraFormKesediaanTitle = $canInputKesediaanForm
+                                                ? 'Lihat dokumen sementara kandidat'
+                                                : 'Form kesediaan terkunci karena kandidat sudah lanjut proses';
+                                            $wawancaraLockedPihakUsed = kesediaan_used_single_submit_hubungan($wawancaraCandidateForms);
+                                            $wawancaraLockedPihakUsedJsonRaw = json_encode(array_values($wawancaraLockedPihakUsed), JSON_UNESCAPED_UNICODE);
+                                            if (!is_string($wawancaraLockedPihakUsedJsonRaw)) {
+                                                $wawancaraLockedPihakUsedJsonRaw = '[]';
+                                            }
+                                            $wawancaraLockedPihakUsedJson = h($wawancaraLockedPihakUsedJsonRaw);
+                                            $wawancaraScorecardSubmission = (array)($wawancaraScorecardSubmissionMap[$wawancaraCandidateKey] ?? []);
+                                            $wawancaraHasScorecard = $wawancaraScorecardSubmission !== [];
+                                            $wawancaraScorecardSubmitted = !empty($wawancaraScorecardSubmission['is_submitted']);
+                                            $wawancaraScorecardFinalScore = $wawancaraHasScorecard
+                                                ? round((float)($wawancaraScorecardSubmission['final_score'] ?? 0), 2)
+                                                : 0.0;
+                                            $wawancaraScorecardBadgeText = 'Skor Akhir: ' . ($wawancaraHasScorecard
+                                                ? number_format($wawancaraScorecardFinalScore, 2, '.', '')
+                                                : '0');
+                                            $wawancaraScorecardBadgeClass = $wawancaraHasScorecard ? ' scorecard-on' : ' scorecard-empty';
+                                            $wawancaraScorecardSubmissionPayload = $wawancaraHasScorecard
+                                                ? scorecard_submission_client_payload($wawancaraScorecardSubmission)
+                                                : [];
+                                            $wawancaraScorecardSubmissionJsonRaw = json_encode($wawancaraScorecardSubmissionPayload, JSON_UNESCAPED_UNICODE);
+                                            if (!is_string($wawancaraScorecardSubmissionJsonRaw)) {
+                                                $wawancaraScorecardSubmissionJsonRaw = '{}';
+                                            }
+                                            $wawancaraScorecardSubmissionJson = h($wawancaraScorecardSubmissionJsonRaw);
+                                            $wawancaraFormItems = [];
+                                            foreach ($wawancaraCandidateForms as $wawancaraFormItemRaw) {
+                                                if (!is_array($wawancaraFormItemRaw)) {
+                                                    continue;
+                                                }
+                                                $wawancaraFormStatusRaw = (string)($wawancaraFormItemRaw['status_kesediaan'] ?? '');
+                                                $wawancaraFormStatusLabel = match ($wawancaraFormStatusRaw) {
+                                                    'bersedia' => 'Bersedia',
+                                                    'tidak_bersedia' => 'Tidak Bersedia',
+                                                    default => '-',
+                                                };
+                                                $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_name_original'] ?? ''));
+                                                if ($wawancaraFormFileName === '') {
+                                                    $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_path'] ?? '-'));
+                                                }
+                                                $wawancaraFormFileUrl = kesediaan_form_view_url($wawancaraFormItemRaw);
+                                                $wawancaraFormDownloadUrl = kesediaan_form_view_url($wawancaraFormItemRaw, true);
+                                                $wawancaraFormIsImage = kesediaan_form_is_image_document($wawancaraFormItemRaw);
+                                                $wawancaraFormIsPdf = kesediaan_form_is_pdf_document($wawancaraFormItemRaw);
+                                                $wawancaraFormItems[] = [
+                                                    'hubungan' => (string)($wawancaraFormItemRaw['hubungan'] ?? '-'),
+                                                    'nama_pihak' => (string)($wawancaraFormItemRaw['nama_pihak'] ?? '-'),
+                                                    'status' => $wawancaraFormStatusLabel,
+                                                    'alasan' => (string)($wawancaraFormItemRaw['alasan'] ?? ''),
+                                                    'file' => $wawancaraFormFileName,
+                                                    'file_url' => $wawancaraFormFileUrl,
+                                                    'file_download_url' => $wawancaraFormDownloadUrl,
+                                                    'file_is_image' => $wawancaraFormIsImage,
+                                                    'file_is_pdf' => $wawancaraFormIsPdf,
+                                                    'updated_at' => trim((string)($wawancaraFormItemRaw['updated_at'] ?? '-')),
+                                                ];
+                                            }
+                                            $wawancaraFormItemsJson = h((string)json_encode($wawancaraFormItems, JSON_UNESCAPED_UNICODE));
+                                            ?>
+                                            <li
+                                                class="candidate-item"
+                                                data-process-lanjut="<?= $isWawancaraLanjut ? '1' : '0' ?>"
+                                                data-process-screening="<?= $isWawancaraScreening ? '1' : '0' ?>"
+                                                data-process-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                                            >
+                                                <div class="candidate-main">
+                                                    #<?= h((string)($index + 1)) ?> -
+                                                    <?= h($wawancaraCandidateName) ?>
+                                                    (<?= h($wawancaraCandidateCabang) ?>)
+                                                    - <?= h((string)$wawancaraCandidateCount) ?> suara
+                                                </div>
+                                                <div class="flag-state">
+                                                    <span class="flag-badge<?= h($wawancaraKesediaanBadgeClass) ?>">
+                                                        <?= h($wawancaraKesediaanBadgeText) ?>
+                                                    </span>
+                                                    <?php if (!$isWawancaraScreening && $isWawancaraLanjut): ?>
+                                                    <span class="flag-badge<?= $isWawancaraLanjut ? ' on' : '' ?>">
+                                                        <?= $isWawancaraLanjut ? 'Lanjut Proses' : 'Belum Lanjut Proses' ?>
+                                                    </span>
+                                                    <?php endif; ?>
+                                                    <?php if ($isWawancaraScreening): ?>
+                                                    <span class="flag-badge on screening-on">
+                                                        Lolos Screening
+                                                    </span>
+                                                    <span class="flag-badge<?= h($wawancaraScorecardBadgeClass) ?>">
+                                                        <?= h($wawancaraScorecardBadgeText) ?>
+                                                    </span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <div class="candidate-doc-action">
+                                                    <?php if ($isWawancaraScreening): ?>
+                                                        <button
+                                                            class="doc-icon-btn"
+                                                            type="button"
+                                                            title="<?= $wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini') ?>"
+                                                            data-candidate-bidang="<?= h((string)$bidang) ?>"
+                                                            data-candidate-name="<?= h($wawancaraCandidateName) ?>"
+                                                            data-candidate-cabang="<?= h($wawancaraCandidateCabang) ?>"
+                                                            data-scorecard-submission="<?= $wawancaraScorecardSubmissionJson ?>"
+                                                            data-scorecard-readonly="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                                                            data-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                                                            onclick="showScoreCardModal(this)"
+                                                        >
+                                                            <span class="doc-icon" aria-hidden="true">&#128203;</span>
+                                                            <span class="doc-label"><?= $wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card') ?></span>
+                                                        </button>
+                                                    <?php else: ?>
+                                                        <button
+                                                            class="doc-icon-btn"
+                                                            type="button"
+                                                            title="<?= h($wawancaraFormKesediaanTitle) ?>"
+                                                            data-candidate-bidang="<?= h((string)$bidang) ?>"
+                                                            data-candidate-name="<?= h($wawancaraCandidateName) ?>"
+                                                            data-candidate-cabang="<?= h($wawancaraCandidateCabang) ?>"
+                                                            data-used-locked-pihak="<?= $wawancaraLockedPihakUsedJson ?>"
+                                                            onclick="showTemporaryCandidatePopup(this)"
+                                                            <?= $canInputKesediaanForm ? '' : 'disabled' ?>
+                                                        >
+                                                            <span class="doc-icon" aria-hidden="true">&#128196;</span>
+                                                            <span class="doc-label">Form Kesediaan</span>
+                                                        </button>
+                                                    <?php endif; ?>
+                                                    <button
+                                                        class="doc-icon-btn secondary"
+                                                        type="button"
+                                                        title="<?= $wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput' ?>"
+                                                        data-candidate-name="<?= h($wawancaraCandidateName) ?>"
+                                                        data-form-exists="<?= $wawancaraFormExists ? '1' : '0' ?>"
+                                                        data-form-items="<?= $wawancaraFormItemsJson ?>"
+                                                        onclick="showExistingKesediaanFormModal(this)"
+                                                        <?= $wawancaraFormExists ? '' : 'disabled' ?>
+                                                    >
+                                                        <span class="doc-icon" aria-hidden="true">&#128065;</span>
+                                                        <span class="doc-label">Lihat Form</span>
+                                                    </button>
+                                                    <?php if ($isWawancaraScreening): ?>
+                                                        <form
+                                                            class="doc-action-form"
+                                                            method="post"
+                                                            action="<?= h(app_index_url($wawancaraPageParams)) ?>"
+                                                            onsubmit="return confirm('Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?')"
+                                                        >
+                                                            <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
+                                                            <input type="hidden" name="wawancara_action" value="submit_scorecard">
+                                                            <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                            <input type="hidden" name="target_kandidat_nama" value="<?= h($wawancaraCandidateName) ?>">
+                                                            <input type="hidden" name="target_kandidat_cabang" value="<?= h($wawancaraCandidateCabang) ?>">
+                                                            <button
+                                                                class="doc-scorecard-submit-btn"
+                                                                type="submit"
+                                                                title="<?= $wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.') ?>"
+                                                                <?= (!$wawancaraHasScorecard || $wawancaraScorecardSubmitted) ? 'disabled' : '' ?>
+                                                            >
+                                                                <?= $wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card' ?>
+                                                            </button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+        </main>
+        <div class="doc-modal" id="candidateDocModal" role="dialog" aria-modal="true" aria-labelledby="candidate-doc-title">
+            <div class="doc-modal-panel">
+                <h2 class="doc-modal-title" id="candidate-doc-title">Form Kesediaan</h2>
+                <p class="doc-modal-text">Kandidat: <strong id="candidateDocName">-</strong></p>
+                <form class="doc-modal-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" enctype="multipart/form-data" id="candidateDocForm">
+                    <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
+                    <input type="hidden" name="wawancara_action" value="save_kesediaan_form">
+                    <input type="hidden" name="target_bidang" id="candidateDocBidang" value="">
+                    <input type="hidden" name="target_kandidat_nama" id="candidateDocNamaInput" value="">
+                    <input type="hidden" name="target_kandidat_cabang" id="candidateDocCabang" value="">
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="hubungan">Pihak yang Menyatakan Kesediaan</label>
+                        <select class="doc-field-select" id="hubungan" name="hubungan" required>
+                            <option value="">Pilih pihak</option>
+                            <?php foreach (kesediaan_hubungan_options() as $hubunganOption): ?>
+                                <option value="<?= h($hubunganOption) ?>"><?= h($hubunganOption) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="nama_pihak">Nama Lengkap Pihak</label>
+                        <input
+                            class="doc-field-input"
+                            type="text"
+                            id="nama_pihak"
+                            name="nama_pihak"
+                            placeholder="Pilih pihak terlebih dahulu"
+                            maxlength="120"
+                            required
+                            disabled
+                        >
+                    </div>
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="kesediaan_file">Dokumen Kesediaan (PDF/Gambar)</label>
+                        <input class="doc-field-input" type="file" id="kesediaan_file" name="kesediaan_file" accept=".pdf,image/*" required>
+                    </div>
+
+                    <div class="doc-field">
+                        <span class="doc-field-label">Kesediaan</span>
+                        <div class="doc-check-group">
+                            <label class="doc-check-item">
+                                <input type="radio" name="status_kesediaan" value="bersedia" required>
+                                Bersedia
+                            </label>
+                            <label class="doc-check-item">
+                                <input type="radio" name="status_kesediaan" value="tidak_bersedia" required>
+                                Tidak Bersedia
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="kesediaan_alasan">Alasan (Opsional)</label>
+                        <textarea
+                            class="doc-field-textarea"
+                            id="kesediaan_alasan"
+                            name="alasan"
+                            rows="3"
+                            placeholder="Tambahkan alasan jika diperlukan"
+                            maxlength="2000"
+                        ></textarea>
+                    </div>
+
+                    <div class="doc-modal-actions">
+                        <button class="doc-modal-close" type="button" onclick="closeTemporaryCandidatePopup()">Batal</button>
+                        <button class="doc-modal-submit" type="submit">Simpan</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="doc-modal" id="candidateViewModal" role="dialog" aria-modal="true" aria-labelledby="candidate-view-title">
+            <div class="doc-modal-panel view">
+                <h2 class="doc-modal-title" id="candidate-view-title">Lihat Form Kesediaan</h2>
+                <p class="doc-modal-text">Kandidat: <strong id="candidateViewName">-</strong></p>
+                <div id="candidateViewRecap" class="doc-view-recap" style="display:none;">
+                    <p class="doc-view-recap-title">Rekap Pengisi Form</p>
+                    <div class="doc-view-recap-table-wrap">
+                        <table class="doc-view-recap-table">
+                            <thead>
+                                <tr>
+                                    <th>No</th>
+                                    <th>Pihak</th>
+                                    <th>Nama Pihak</th>
+                                    <th>Status</th>
+                                    <th>Alasan</th>
+                                    <th>Dokumen</th>
+                                    <th>Waktu Simpan</th>
+                                </tr>
+                            </thead>
+                            <tbody id="candidateViewRecapBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="candidateViewEmpty" class="doc-view-empty">Belum ada form kesediaan yang disimpan untuk kandidat ini.</div>
+                <div class="doc-modal-actions">
+                    <button class="doc-modal-close" type="button" onclick="closeExistingKesediaanFormModal()">Tutup</button>
+                </div>
+            </div>
+        </div>
+        <div class="doc-modal" id="candidateScoreCardModal" role="dialog" aria-modal="true" aria-labelledby="candidate-scorecard-title">
+            <div class="doc-modal-panel scorecard">
+                <h2 class="doc-modal-title" id="candidate-scorecard-title">Input Score Card</h2>
+                <p class="doc-modal-text">Kandidat: <strong id="candidateScoreCardName">-</strong></p>
+                <p class="doc-modal-text">Bidang: <strong id="candidateScoreCardBidangName">-</strong></p>
+                <form class="doc-modal-form scorecard-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" id="candidateScoreCardForm">
+                    <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
+                    <input type="hidden" name="wawancara_action" value="save_scorecard">
+                    <input type="hidden" name="target_bidang" id="candidateScoreCardBidangInput" value="">
+                    <input type="hidden" name="target_kandidat_nama" id="candidateScoreCardNamaInput" value="">
+                    <input type="hidden" name="target_kandidat_cabang" id="candidateScoreCardCabangInput" value="">
+
+                    <div class="scorecard-scale-box">
+                        <p class="scorecard-scale-title">Skala Penilaian</p>
+                        <ul class="scorecard-scale-list">
+                            <li><strong>1</strong> = Sangat Kurang. Ada red flag signifikan dan tidak direkomendasikan.</li>
+                            <li><strong>3</strong> = Cukup/Memenuhi Syarat. Memenuhi standar dasar namun jawaban masih umum.</li>
+                            <li><strong>5</strong> = Sangat Baik/Ideal. Menunjukkan kedalaman rohani, kematangan, dan kompetensi yang sangat baik.</li>
+                        </ul>
+                    </div>
+
+                    <div id="candidateScoreCardTemplateState" class="scorecard-template-state scorecard-hidden">Template score card belum tersedia untuk bidang ini.</div>
+
+                    <div class="scorecard-meta-grid">
+                        <div class="doc-field">
+                            <label class="doc-field-label" for="scorecardInterviewDate">Tanggal Wawancara</label>
+                            <input class="doc-field-input" type="date" id="scorecardInterviewDate" name="scorecard_interview_date" required>
+                        </div>
+                        <div class="doc-field">
+                            <label class="doc-field-label" for="scorecardLocation">Lokasi</label>
+                            <input class="doc-field-input" type="text" id="scorecardLocation" name="scorecard_location" maxlength="180" required>
+                        </div>
+                    </div>
+
+                    <div class="scorecard-ranges">
+                        <p class="scorecard-range-title">Kriteria Total Score Akhir</p>
+                        <ul class="scorecard-range-list" id="candidateScoreCardRangeList"></ul>
+                    </div>
+
+                    <div id="candidateScoreCardSections" class="scorecard-section-list"></div>
+
+                    <div class="scorecard-final-grid">
+                        <div class="scorecard-final-card highlight">
+                            <span class="scorecard-final-label">Total Score Akhir</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardFinalScore">0.00</strong>
+                        </div>
+                        <div class="scorecard-final-card highlight">
+                            <span class="scorecard-final-label">Hasil Otomatis</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardRecommendation">Lengkapi semua skor</strong>
+                        </div>
+                        <div class="scorecard-final-card">
+                            <span class="scorecard-final-label">Template</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardTemplateTitle">-</strong>
+                        </div>
+                        <div class="scorecard-final-card">
+                            <span class="scorecard-final-label">Terakhir Disimpan</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardUpdatedAt">Belum pernah disimpan</strong>
+                        </div>
+                    </div>
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="candidateScoreCardDecision">Keputusan Pewawancara</label>
+                        <select class="doc-field-select" id="candidateScoreCardDecision" name="scorecard_interviewer_decision" required></select>
+                    </div>
+
+                    <div class="doc-field">
+                        <label class="doc-field-label" for="candidateScoreCardDecisionNote">Catatan Keputusan</label>
+                        <textarea class="doc-field-textarea" id="candidateScoreCardDecisionNote" name="scorecard_decision_note" rows="3" placeholder="Isi catatan jika diperlukan"></textarea>
+                    </div>
+
+                    <p class="scorecard-save-note">Nilai bobot dan hasil akhir dihitung otomatis berdasarkan skor tiap pertanyaan.</p>
+
+                    <div class="doc-modal-actions">
+                        <button class="doc-modal-close" type="button" onclick="closeScoreCardModal()">Tutup</button>
+                        <button class="doc-modal-submit" type="submit" id="candidateScoreCardSubmit">Simpan Score Card</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script>
+            const scorecardTemplatesByBidang = <?= $wawancaraScorecardTemplatesJsonRaw ?>;
+            const candidateDocModal = document.getElementById('candidateDocModal');
+            const candidateDocName = document.getElementById('candidateDocName');
+            const candidateDocForm = document.getElementById('candidateDocForm');
+            const candidateDocBidang = document.getElementById('candidateDocBidang');
+            const candidateDocNamaInput = document.getElementById('candidateDocNamaInput');
+            const candidateDocCabang = document.getElementById('candidateDocCabang');
+            const candidateDocPihakSelect = document.getElementById('hubungan');
+            const candidateDocNamaPihakInput = document.getElementById('nama_pihak');
+            const candidateViewModal = document.getElementById('candidateViewModal');
+            const candidateViewName = document.getElementById('candidateViewName');
+            const candidateViewRecap = document.getElementById('candidateViewRecap');
+            const candidateViewRecapBody = document.getElementById('candidateViewRecapBody');
+            const candidateViewEmpty = document.getElementById('candidateViewEmpty');
+            const candidateScoreCardModal = document.getElementById('candidateScoreCardModal');
+            const candidateScoreCardTitle = document.getElementById('candidate-scorecard-title');
+            const candidateScoreCardName = document.getElementById('candidateScoreCardName');
+            const candidateScoreCardBidangName = document.getElementById('candidateScoreCardBidangName');
+            const candidateScoreCardForm = document.getElementById('candidateScoreCardForm');
+            const candidateScoreCardBidangInput = document.getElementById('candidateScoreCardBidangInput');
+            const candidateScoreCardNamaInput = document.getElementById('candidateScoreCardNamaInput');
+            const candidateScoreCardCabangInput = document.getElementById('candidateScoreCardCabangInput');
+            const candidateScoreCardTemplateState = document.getElementById('candidateScoreCardTemplateState');
+            const candidateScoreCardTemplateTitle = document.getElementById('candidateScoreCardTemplateTitle');
+            const candidateScoreCardInterviewDate = document.getElementById('scorecardInterviewDate');
+            const candidateScoreCardLocation = document.getElementById('scorecardLocation');
+            const candidateScoreCardSections = document.getElementById('candidateScoreCardSections');
+            const candidateScoreCardRangeList = document.getElementById('candidateScoreCardRangeList');
+            const candidateScoreCardFinalScore = document.getElementById('candidateScoreCardFinalScore');
+            const candidateScoreCardRecommendation = document.getElementById('candidateScoreCardRecommendation');
+            const candidateScoreCardUpdatedAt = document.getElementById('candidateScoreCardUpdatedAt');
+            const candidateScoreCardDecision = document.getElementById('candidateScoreCardDecision');
+            const candidateScoreCardDecisionNote = document.getElementById('candidateScoreCardDecisionNote');
+            const candidateScoreCardSubmit = document.getElementById('candidateScoreCardSubmit');
+            const wawancaraProcessFilter = document.getElementById('wawancaraProcessFilter');
+            const wawancaraFilterEmpty = document.getElementById('wawancaraFilterEmpty');
+            const singleSubmitPihakSet = new Set(['Diri Sendiri (Kandidat)', 'Ibu', 'Ayah']);
+            let activeScoreCardTemplate = null;
+            let activeScoreCardReadOnly = false;
+
+            function buildWawancaraFilterUrl(selectedFilter) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('page', 'wawancara');
+                if (selectedFilter && selectedFilter !== 'all') {
+                    url.searchParams.set('wawancara_filter', selectedFilter);
+                } else {
+                    url.searchParams.delete('wawancara_filter');
+                }
+                url.hash = '';
+                return url.toString();
+            }
+
+            function syncBodyScrollState() {
+                const isDocOpen = candidateDocModal && candidateDocModal.classList.contains('open');
+                const isViewOpen = candidateViewModal && candidateViewModal.classList.contains('open');
+                const isScoreCardOpen = candidateScoreCardModal && candidateScoreCardModal.classList.contains('open');
+                document.body.style.overflow = (isDocOpen || isViewOpen || isScoreCardOpen) ? 'hidden' : '';
+            }
+
+            function syncNamaPihakInputState() {
+                if (!candidateDocPihakSelect || !candidateDocNamaPihakInput || !candidateDocNamaInput) {
+                    return;
+                }
+
+                const selectedPihak = (candidateDocPihakSelect.value || '').trim();
+                const kandidatName = (candidateDocNamaInput.value || '').trim();
+
+                if (selectedPihak === '') {
+                    candidateDocNamaPihakInput.value = '';
+                    candidateDocNamaPihakInput.disabled = true;
+                    candidateDocNamaPihakInput.readOnly = false;
+                    candidateDocNamaPihakInput.placeholder = 'Pilih pihak terlebih dahulu';
+                    candidateDocNamaPihakInput.dataset.autofilled = '0';
+                    return;
+                }
+
+                candidateDocNamaPihakInput.disabled = false;
+                candidateDocNamaPihakInput.placeholder = 'Masukkan nama lengkap';
+                if (selectedPihak === 'Diri Sendiri (Kandidat)') {
+                    candidateDocNamaPihakInput.value = kandidatName;
+                    candidateDocNamaPihakInput.readOnly = true;
+                    candidateDocNamaPihakInput.dataset.autofilled = '1';
+                    return;
+                }
+
+                if (candidateDocNamaPihakInput.dataset.autofilled === '1') {
+                    candidateDocNamaPihakInput.value = '';
+                }
+                candidateDocNamaPihakInput.readOnly = false;
+                candidateDocNamaPihakInput.dataset.autofilled = '0';
+            }
+
+            function applyLockedPihakOptions(buttonElement) {
+                if (!candidateDocPihakSelect) {
+                    return;
+                }
+
+                let usedPihak = [];
+                try {
+                    const decoded = JSON.parse(buttonElement && buttonElement.dataset.usedLockedPihak ? buttonElement.dataset.usedLockedPihak : '[]');
+                    if (Array.isArray(decoded)) {
+                        usedPihak = decoded.map(function (item) {
+                            return String(item || '').trim();
+                        }).filter(function (item) {
+                            return item !== '';
+                        });
+                    }
+                } catch (error) {
+                    usedPihak = [];
+                }
+
+                const usedSet = new Set(usedPihak);
+                Array.prototype.forEach.call(candidateDocPihakSelect.options, function (option) {
+                    const optionValue = String(option.value || '').trim();
+                    if (!Object.prototype.hasOwnProperty.call(option.dataset, 'baseLabel')) {
+                        option.dataset.baseLabel = option.textContent;
+                    }
+                    option.textContent = option.dataset.baseLabel;
+                    option.disabled = false;
+
+                    if (optionValue === '') {
+                        return;
+                    }
+                    if (singleSubmitPihakSet.has(optionValue) && usedSet.has(optionValue)) {
+                        option.disabled = true;
+                        option.textContent = option.dataset.baseLabel + ' (sudah mengisi)';
+                    }
+                });
+
+                const selectedOption = candidateDocPihakSelect.options[candidateDocPihakSelect.selectedIndex];
+                if (selectedOption && selectedOption.disabled) {
+                    candidateDocPihakSelect.value = '';
+                }
+            }
+
+            function showTemporaryCandidatePopup(buttonElement) {
+                if (
+                    !buttonElement ||
+                    !candidateDocModal ||
+                    !candidateDocName ||
+                    !candidateDocForm ||
+                    !candidateDocBidang ||
+                    !candidateDocNamaInput ||
+                    !candidateDocCabang
+                ) {
+                    return;
+                }
+
+                const candidateBidang = (buttonElement.dataset.candidateBidang || '').trim();
+                const candidateName = (buttonElement.dataset.candidateName || '').trim();
+                const candidateCabang = (buttonElement.dataset.candidateCabang || '').trim();
+                const displayName = candidateName !== '' ? candidateName : '-';
+
+                candidateDocForm.reset();
+                candidateDocBidang.value = candidateBidang;
+                candidateDocNamaInput.value = candidateName;
+                candidateDocCabang.value = candidateCabang;
+                candidateDocName.textContent = displayName;
+                applyLockedPihakOptions(buttonElement);
+                syncNamaPihakInputState();
+                candidateDocModal.classList.add('open');
+                syncBodyScrollState();
+            }
+
+            function closeTemporaryCandidatePopup() {
+                if (!candidateDocModal) {
+                    return;
+                }
+                candidateDocModal.classList.remove('open');
+                syncBodyScrollState();
+            }
+
+            function showExistingKesediaanFormModal(buttonElement) {
+                if (
+                    !buttonElement ||
+                    !candidateViewModal ||
+                    !candidateViewName ||
+                    !candidateViewRecap ||
+                    !candidateViewRecapBody ||
+                    !candidateViewEmpty
+                ) {
+                    return;
+                }
+
+                const candidateName = (buttonElement.dataset.candidateName || '').trim();
+                let formItems = [];
+                try {
+                    const decoded = JSON.parse(buttonElement.dataset.formItems || '[]');
+                    if (Array.isArray(decoded)) {
+                        formItems = decoded;
+                    }
+                } catch (error) {
+                    formItems = [];
+                }
+
+                const hasForm = formItems.length > 0;
+                candidateViewName.textContent = candidateName !== '' ? candidateName : '-';
+
+                if (!hasForm) {
+                    candidateViewRecapBody.innerHTML = '';
+                    candidateViewRecap.style.display = 'none';
+                    candidateViewEmpty.style.display = 'block';
+                } else {
+                    const recapRows = [];
+                    formItems.forEach(function (item, idx) {
+                        const recapHubungan = (item && item.hubungan ? String(item.hubungan) : '-');
+                        const recapNamaPihak = (item && item.nama_pihak ? String(item.nama_pihak) : '-');
+                        const recapStatus = (item && item.status ? String(item.status) : '-');
+                        const recapAlasan = (item && item.alasan ? String(item.alasan) : '-');
+                        const recapFileName = (item && item.file ? String(item.file) : '-');
+                        const recapFileUrl = sanitizeSafeUrl(item && item.file_url ? String(item.file_url) : '');
+                        const recapDownloadUrl = sanitizeSafeUrl(item && item.file_download_url ? String(item.file_download_url) : '');
+                        const recapUpdatedAt = (item && item.updated_at ? String(item.updated_at) : '-');
+
+                        let recapDocCell = '<span>-</span>';
+                        if (recapFileUrl !== '' || recapDownloadUrl !== '') {
+                            const actionLinks = [];
+                            if (recapFileUrl !== '') {
+                                actionLinks.push('<a class=\"doc-view-link\" href=\"' + escapeHtml(recapFileUrl) + '\" target=\"_blank\" rel=\"noopener\">Lihat</a>');
+                            }
+                            if (recapDownloadUrl !== '') {
+                                actionLinks.push('<a class=\"doc-view-link\" href=\"' + escapeHtml(recapDownloadUrl) + '\" target=\"_blank\" rel=\"noopener\">Unduh</a>');
+                            }
+                            recapDocCell = '<div class=\"doc-view-link-group\">' + actionLinks.join('') + '</div>';
+                        }
+
+                        recapRows.push(
+                            '<tr>' +
+                                '<td>' + escapeHtml(String(idx + 1)) + '</td>' +
+                                '<td>' + escapeHtml(recapHubungan) + '</td>' +
+                                '<td>' + escapeHtml(recapNamaPihak) + '</td>' +
+                                '<td>' + escapeHtml(recapStatus) + '</td>' +
+                                '<td>' + escapeHtml(recapAlasan) + '</td>' +
+                                '<td>' + recapDocCell + '</td>' +
+                                '<td>' + escapeHtml(recapUpdatedAt) + '</td>' +
+                            '</tr>'
+                        );
+                    });
+                    if (recapRows.length === 0) {
+                        recapRows.push('<tr><td colspan=\"7\">Belum ada data form kesediaan.</td></tr>');
+                    }
+                    candidateViewRecapBody.innerHTML = recapRows.join('');
+                    candidateViewRecap.style.display = 'block';
+                    candidateViewEmpty.style.display = 'none';
+                }
+
+                candidateViewModal.classList.add('open');
+                syncBodyScrollState();
+            }
+
+            function closeExistingKesediaanFormModal() {
+                if (!candidateViewModal) {
+                    return;
+                }
+                candidateViewModal.classList.remove('open');
+                syncBodyScrollState();
+            }
+
+            function currentDateInputValue() {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                return year + '-' + month + '-' + day;
+            }
+
+            function getScoreCardTemplateForBidang(bidang) {
+                const key = String(bidang || '').trim();
+                if (key !== '' && scorecardTemplatesByBidang && Object.prototype.hasOwnProperty.call(scorecardTemplatesByBidang, key)) {
+                    return scorecardTemplatesByBidang[key];
+                }
+                return null;
+            }
+
+            function getScoreCardRecommendation(template, score) {
+                if (!template || !Array.isArray(template.final_ranges)) {
+                    return '';
+                }
+
+                for (let i = 0; i < template.final_ranges.length; i++) {
+                    const range = template.final_ranges[i] || {};
+                    const min = Number(range.min || 0);
+                    const max = Number(range.max || 0);
+                    if (score >= min && score <= max) {
+                        return String(range.label || '').trim();
+                    }
+                }
+
+                return '';
+            }
+
+            function formatScoreCardNumber(value) {
+                const numericValue = Number(value || 0);
+                if (!Number.isFinite(numericValue)) {
+                    return '0.00';
+                }
+                return numericValue.toFixed(2);
+            }
+
+            function scoreCardWeightLabel(weight) {
+                const numericWeight = Number(weight || 0);
+                if (!Number.isFinite(numericWeight)) {
+                    return '0%';
+                }
+                return formatScoreCardNumber(numericWeight * 100).replace(/\.00$/, '') + '%';
+            }
+
+            function parseScoreCardSubmission(buttonElement) {
+                if (!buttonElement) {
+                    return {};
+                }
+
+                try {
+                    const decoded = JSON.parse(buttonElement.dataset.scorecardSubmission || '{}');
+                    return decoded && typeof decoded === 'object' ? decoded : {};
+                } catch (error) {
+                    return {};
+                }
+            }
+
+            function renderScoreCardRanges(template, score, allAnswered) {
+                if (!candidateScoreCardRangeList) {
+                    return;
+                }
+
+                const ranges = template && Array.isArray(template.final_ranges) ? template.final_ranges : [];
+                const recommendation = allAnswered ? getScoreCardRecommendation(template, score) : '';
+                const items = ranges.map(function (range) {
+                    const label = String(range && range.label ? range.label : '').trim();
+                    const min = formatScoreCardNumber(range && range.min ? range.min : 0);
+                    const max = formatScoreCardNumber(range && range.max ? range.max : 0);
+                    const isActive = recommendation !== '' && recommendation === label;
+                    return '<li class="scorecard-range-item' + (isActive ? ' active' : '') + '">' +
+                        escapeHtml(min + ' - ' + max + ' = ' + label) +
+                    '</li>';
+                });
+
+                candidateScoreCardRangeList.innerHTML = items.join('');
+            }
+
+            function renderScoreCardDecisionOptions(template, selectedValue) {
+                if (!candidateScoreCardDecision) {
+                    return;
+                }
+
+                const options = template && Array.isArray(template.decision_options) ? template.decision_options : [];
+                const rows = ['<option value="">Pilih keputusan</option>'];
+                options.forEach(function (option) {
+                    const value = String(option || '').trim();
+                    if (value === '') {
+                        return;
+                    }
+                    const selected = value === selectedValue ? ' selected' : '';
+                    rows.push('<option value="' + escapeHtml(value) + '"' + selected + '>' + escapeHtml(value) + '</option>');
+                });
+                candidateScoreCardDecision.innerHTML = rows.join('');
+            }
+
+            function renderScoreCardSections(template, submission) {
+                if (!candidateScoreCardSections) {
+                    return;
+                }
+
+                const answers = submission && submission.answers && typeof submission.answers === 'object' ? submission.answers : {};
+                const sectionNotes = submission && submission.section_notes && typeof submission.section_notes === 'object' ? submission.section_notes : {};
+                const sections = template && Array.isArray(template.sections) ? template.sections : [];
+                const html = [];
+
+                sections.forEach(function (section) {
+                    const sectionId = String(section && section.id ? section.id : '').trim();
+                    const sectionTitle = String(section && section.title ? section.title : '').trim();
+                    const noteLabel = String(section && section.note_label ? section.note_label : ('Catatan Bagian ' + sectionId)).trim();
+                    const focus = String(section && section.focus ? section.focus : '').trim();
+                    const questions = Array.isArray(section && section.questions) ? section.questions : [];
+
+                    const questionRows = questions.map(function (question) {
+                        const questionId = String(question && question.id ? question.id : '').trim();
+                        const label = String(question && question.label ? question.label : '').trim();
+                        const lowIndicator = Array.isArray(question && question.low_indicator) ? question.low_indicator : [];
+                        const highIndicator = Array.isArray(question && question.high_indicator) ? question.high_indicator : [];
+                        const minScore = Number(question && question.min_score ? question.min_score : 1);
+                        const maxScore = Number(question && question.max_score ? question.max_score : 5);
+                        const existingScore = Number(Object.prototype.hasOwnProperty.call(answers, questionId) ? answers[questionId] : 0);
+                        const radios = [];
+
+                        for (let score = minScore; score <= maxScore; score++) {
+                            const checked = existingScore === score ? ' checked' : '';
+                            const required = score === minScore ? ' required' : '';
+                            radios.push(
+                                '<label class="scorecard-score-option">' +
+                                    '<input type="radio" name="scorecard_answers[' + escapeHtml(questionId) + ']" value="' + escapeHtml(String(score)) + '"' + checked + required + '>' +
+                                    '<span>' + escapeHtml(String(score)) + '</span>' +
+                                '</label>'
+                            );
+                        }
+
+                        const lowList = lowIndicator.length > 0
+                            ? '<ul>' + lowIndicator.map(function (item) { return '<li>' + escapeHtml(String(item || '')) + '</li>'; }).join('') + '</ul>'
+                            : '<div>-</div>';
+                        const highList = highIndicator.length > 0
+                            ? '<ul>' + highIndicator.map(function (item) { return '<li>' + escapeHtml(String(item || '')) + '</li>'; }).join('') + '</ul>'
+                            : '<div>-</div>';
+
+                        return (
+                            '<article class="scorecard-question">' +
+                                '<div class="scorecard-question-head">' +
+                                    '<p class="scorecard-question-title">' + escapeHtml(questionId + '. ' + label) + '</p>' +
+                                    '<div class="scorecard-score-group">' + radios.join('') + '</div>' +
+                                '</div>' +
+                                '<div class="scorecard-indicators">' +
+                                    '<div class="scorecard-indicator low">' +
+                                        '<p class="scorecard-indicator-title">Indikator Skor Rendah</p>' +
+                                        lowList +
+                                    '</div>' +
+                                    '<div class="scorecard-indicator high">' +
+                                        '<p class="scorecard-indicator-title">Indikator Skor Tinggi</p>' +
+                                        highList +
+                                    '</div>' +
+                                '</div>' +
+                            '</article>'
+                        );
+                    }).join('');
+
+                    html.push(
+                        '<section class="scorecard-section" data-section-id="' + escapeHtml(sectionId) + '" data-section-weight="' + escapeHtml(String(section && section.weight ? section.weight : 0)) + '">' +
+                            '<div class="scorecard-section-head">' +
+                                '<div>' +
+                                    '<h3 class="scorecard-section-title">' + escapeHtml(sectionId + '. ' + sectionTitle) + '</h3>' +
+                                    (focus !== '' ? '<p class="scorecard-section-focus">Fokus: ' + escapeHtml(focus) + '</p>' : '') +
+                                '</div>' +
+                                '<span class="scorecard-section-weight">Bobot ' + escapeHtml(scoreCardWeightLabel(section && section.weight ? section.weight : 0)) + '</span>' +
+                            '</div>' +
+                            '<div class="scorecard-question-list">' + questionRows + '</div>' +
+                            '<div class="scorecard-section-summary">' +
+                                '<div class="scorecard-summary-item"><span class="scorecard-summary-label">Total Score</span><strong class="scorecard-summary-value" data-section-total="' + escapeHtml(sectionId) + '">0.00</strong></div>' +
+                                '<div class="scorecard-summary-item"><span class="scorecard-summary-label">Rata-rata</span><strong class="scorecard-summary-value" data-section-average="' + escapeHtml(sectionId) + '">0.00</strong></div>' +
+                                '<div class="scorecard-summary-item"><span class="scorecard-summary-label">Nilai Bobot</span><strong class="scorecard-summary-value" data-section-weighted="' + escapeHtml(sectionId) + '">0.00</strong></div>' +
+                                '<div class="scorecard-summary-item"><span class="scorecard-summary-label">Pertanyaan Terisi</span><strong class="scorecard-summary-value" data-section-answered="' + escapeHtml(sectionId) + '">0/' + escapeHtml(String(questions.length)) + '</strong></div>' +
+                            '</div>' +
+                            '<div class="doc-field">' +
+                                '<label class="doc-field-label" for="scorecard_section_note_' + escapeHtml(sectionId) + '">' + escapeHtml(noteLabel) + '</label>' +
+                                '<textarea class="doc-field-textarea" id="scorecard_section_note_' + escapeHtml(sectionId) + '" name="scorecard_section_notes[' + escapeHtml(sectionId) + ']" rows="3">' + escapeHtml(String(Object.prototype.hasOwnProperty.call(sectionNotes, sectionId) ? sectionNotes[sectionId] : '')) + '</textarea>' +
+                            '</div>' +
+                        '</section>'
+                    );
+                });
+
+                candidateScoreCardSections.innerHTML = html.join('');
+            }
+
+            function syncScoreCardDecisionNoteRequirement() {
+                if (!candidateScoreCardDecision || !candidateScoreCardDecisionNote) {
+                    return;
+                }
+
+                const selectedDecision = String(candidateScoreCardDecision.value || '').trim().toLowerCase();
+                const requiresNote = selectedDecision.indexOf('catatan') !== -1;
+                candidateScoreCardDecisionNote.required = requiresNote;
+                candidateScoreCardDecisionNote.placeholder = requiresNote ? 'Catatan wajib diisi untuk keputusan ini' : 'Isi catatan jika diperlukan';
+            }
+
+            function setScoreCardFormReadOnly(readOnly, isSubmitted, hasSubmission) {
+                activeScoreCardReadOnly = !!readOnly;
+
+                if (candidateScoreCardTitle) {
+                    if (activeScoreCardReadOnly) {
+                        candidateScoreCardTitle.textContent = 'Lihat Score Card';
+                    } else if (hasSubmission) {
+                        candidateScoreCardTitle.textContent = 'Edit Score Card';
+                    } else {
+                        candidateScoreCardTitle.textContent = 'Input Score Card';
+                    }
+                }
+
+                if (candidateScoreCardForm) {
+                    const controls = candidateScoreCardForm.querySelectorAll('input:not([type="hidden"]), select, textarea');
+                    controls.forEach(function (control) {
+                        control.disabled = activeScoreCardReadOnly;
+                    });
+                }
+
+                if (candidateScoreCardSubmit) {
+                    candidateScoreCardSubmit.disabled = activeScoreCardReadOnly;
+                    candidateScoreCardSubmit.style.display = activeScoreCardReadOnly ? 'none' : '';
+                    candidateScoreCardSubmit.textContent = hasSubmission ? 'Simpan Perubahan' : 'Simpan Score Card';
+                }
+
+                if (candidateScoreCardTemplateState) {
+                    if (activeScoreCardReadOnly) {
+                        candidateScoreCardTemplateState.textContent = isSubmitted
+                            ? 'Score card sudah disubmit dan hanya dapat dilihat.'
+                            : 'Score card hanya dapat dilihat.';
+                        candidateScoreCardTemplateState.classList.remove('scorecard-hidden', 'error');
+                    } else {
+                        candidateScoreCardTemplateState.textContent = 'Template score card belum tersedia untuk bidang ini.';
+                        candidateScoreCardTemplateState.classList.add('scorecard-hidden');
+                        candidateScoreCardTemplateState.classList.remove('error');
+                    }
+                }
+            }
+
+            function updateScoreCardSummary() {
+                if (!candidateScoreCardForm || !activeScoreCardTemplate || !Array.isArray(activeScoreCardTemplate.sections)) {
+                    return;
+                }
+
+                let finalScore = 0;
+                let allAnswered = true;
+
+                activeScoreCardTemplate.sections.forEach(function (section) {
+                    const sectionId = String(section && section.id ? section.id : '').trim();
+                    const questions = Array.isArray(section && section.questions) ? section.questions : [];
+                    let sectionTotal = 0;
+                    let answeredCount = 0;
+
+                    questions.forEach(function (question) {
+                        const questionId = String(question && question.id ? question.id : '').trim();
+                        if (questionId === '') {
+                            return;
+                        }
+                        const checked = candidateScoreCardForm.querySelector('input[name="scorecard_answers[' + questionId + ']"]:checked');
+                        if (!checked) {
+                            allAnswered = false;
+                            return;
+                        }
+                        const score = Number(checked.value || 0);
+                        if (Number.isFinite(score)) {
+                            sectionTotal += score;
+                            answeredCount++;
+                        }
+                    });
+
+                    const questionCount = questions.length;
+                    const sectionAverage = questionCount > 0 ? (sectionTotal / questionCount) : 0;
+                    const sectionWeight = Number(section && section.weight ? section.weight : 0);
+                    const weightedScore = sectionAverage * sectionWeight;
+                    finalScore += weightedScore;
+
+                    const totalEl = candidateScoreCardForm.querySelector('[data-section-total="' + sectionId + '"]');
+                    const avgEl = candidateScoreCardForm.querySelector('[data-section-average="' + sectionId + '"]');
+                    const weightedEl = candidateScoreCardForm.querySelector('[data-section-weighted="' + sectionId + '"]');
+                    const answeredEl = candidateScoreCardForm.querySelector('[data-section-answered="' + sectionId + '"]');
+
+                    if (totalEl) {
+                        totalEl.textContent = formatScoreCardNumber(sectionTotal);
+                    }
+                    if (avgEl) {
+                        avgEl.textContent = formatScoreCardNumber(sectionAverage);
+                    }
+                    if (weightedEl) {
+                        weightedEl.textContent = formatScoreCardNumber(weightedScore);
+                    }
+                    if (answeredEl) {
+                        answeredEl.textContent = String(answeredCount) + '/' + String(questionCount);
+                    }
+                });
+
+                const roundedFinal = Math.round(finalScore * 100) / 100;
+                if (candidateScoreCardFinalScore) {
+                    candidateScoreCardFinalScore.textContent = formatScoreCardNumber(roundedFinal);
+                }
+                if (candidateScoreCardRecommendation) {
+                    candidateScoreCardRecommendation.textContent = allAnswered
+                        ? (getScoreCardRecommendation(activeScoreCardTemplate, roundedFinal) || '-')
+                        : 'Lengkapi semua skor';
+                }
+                renderScoreCardRanges(activeScoreCardTemplate, roundedFinal, allAnswered);
+            }
+
+            function resetScoreCardModal() {
+                activeScoreCardTemplate = null;
+                activeScoreCardReadOnly = false;
+                if (candidateScoreCardForm) {
+                    candidateScoreCardForm.reset();
+                }
+                if (candidateScoreCardSections) {
+                    candidateScoreCardSections.innerHTML = '';
+                }
+                if (candidateScoreCardRangeList) {
+                    candidateScoreCardRangeList.innerHTML = '';
+                }
+                if (candidateScoreCardTemplateTitle) {
+                    candidateScoreCardTemplateTitle.textContent = '-';
+                }
+                if (candidateScoreCardUpdatedAt) {
+                    candidateScoreCardUpdatedAt.textContent = 'Belum pernah disimpan';
+                }
+                if (candidateScoreCardFinalScore) {
+                    candidateScoreCardFinalScore.textContent = '0.00';
+                }
+                if (candidateScoreCardRecommendation) {
+                    candidateScoreCardRecommendation.textContent = 'Lengkapi semua skor';
+                }
+                if (candidateScoreCardDecision) {
+                    candidateScoreCardDecision.innerHTML = '<option value="">Pilih keputusan</option>';
+                }
+                if (candidateScoreCardDecisionNote) {
+                    candidateScoreCardDecisionNote.value = '';
+                    candidateScoreCardDecisionNote.required = false;
+                }
+                setScoreCardFormReadOnly(false, false, false);
+            }
+
+            function showScoreCardModal(buttonElement) {
+                if (!buttonElement || !candidateScoreCardModal || !candidateScoreCardName || !candidateScoreCardForm) {
+                    return;
+                }
+
+                const candidateBidang = (buttonElement.dataset.candidateBidang || '').trim();
+                const candidateName = (buttonElement.dataset.candidateName || '').trim();
+                const candidateCabang = (buttonElement.dataset.candidateCabang || '').trim();
+                const isReadOnly = String(buttonElement.dataset.scorecardReadonly || '').trim() === '1';
+                const isSubmitted = String(buttonElement.dataset.scorecardSubmitted || '').trim() === '1';
+                const template = getScoreCardTemplateForBidang(candidateBidang);
+                const submission = parseScoreCardSubmission(buttonElement);
+                const hasSubmission = submission && typeof submission === 'object' && Object.keys(submission).length > 0;
+
+                resetScoreCardModal();
+
+                if (candidateScoreCardBidangInput) {
+                    candidateScoreCardBidangInput.value = candidateBidang;
+                }
+                if (candidateScoreCardNamaInput) {
+                    candidateScoreCardNamaInput.value = candidateName;
+                }
+                if (candidateScoreCardCabangInput) {
+                    candidateScoreCardCabangInput.value = candidateCabang;
+                }
+                if (candidateScoreCardName) {
+                    candidateScoreCardName.textContent = candidateName !== '' ? candidateName : '-';
+                }
+                if (candidateScoreCardBidangName) {
+                    candidateScoreCardBidangName.textContent = candidateBidang !== '' ? candidateBidang : '-';
+                }
+                if (candidateScoreCardTitle) {
+                    candidateScoreCardTitle.textContent = isReadOnly ? 'Lihat Score Card' : (hasSubmission ? 'Edit Score Card' : 'Input Score Card');
+                }
+
+                if (!template || !Array.isArray(template.sections) || template.sections.length === 0) {
+                    if (candidateScoreCardTemplateState) {
+                        candidateScoreCardTemplateState.textContent = 'Template score card belum tersedia untuk bidang ini.';
+                        candidateScoreCardTemplateState.classList.remove('scorecard-hidden');
+                        candidateScoreCardTemplateState.classList.add('error');
+                    }
+                    if (candidateScoreCardSubmit) {
+                        candidateScoreCardSubmit.disabled = true;
+                    }
+                    candidateScoreCardModal.classList.add('open');
+                    syncBodyScrollState();
+                    return;
+                }
+
+                activeScoreCardTemplate = template;
+                if (candidateScoreCardTemplateTitle) {
+                    candidateScoreCardTemplateTitle.textContent = String(template.title || '-');
+                }
+                if (candidateScoreCardInterviewDate) {
+                    candidateScoreCardInterviewDate.value = String(submission && submission.interview_date ? submission.interview_date : currentDateInputValue());
+                }
+                if (candidateScoreCardLocation) {
+                    candidateScoreCardLocation.value = String(submission && submission.location ? submission.location : candidateCabang);
+                }
+                if (candidateScoreCardUpdatedAt) {
+                    const updatedAt = String(submission && submission.updated_at ? submission.updated_at : '').trim();
+                    candidateScoreCardUpdatedAt.textContent = updatedAt !== '' ? updatedAt : 'Belum pernah disimpan';
+                }
+
+                renderScoreCardDecisionOptions(template, String(submission && submission.interviewer_decision ? submission.interviewer_decision : ''));
+                if (candidateScoreCardDecisionNote) {
+                    candidateScoreCardDecisionNote.value = String(submission && submission.decision_note ? submission.decision_note : '');
+                }
+                renderScoreCardSections(template, submission);
+                syncScoreCardDecisionNoteRequirement();
+                updateScoreCardSummary();
+                setScoreCardFormReadOnly(isReadOnly, isSubmitted, hasSubmission);
+
+                candidateScoreCardModal.classList.add('open');
+                syncBodyScrollState();
+            }
+
+            function closeScoreCardModal() {
+                if (!candidateScoreCardModal) {
+                    return;
+                }
+                candidateScoreCardModal.classList.remove('open');
+                syncBodyScrollState();
+            }
+
+            if (candidateDocModal) {
+                candidateDocModal.addEventListener('click', function (event) {
+                    if (event.target === candidateDocModal) {
+                        closeTemporaryCandidatePopup();
+                    }
+                });
+            }
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && candidateDocModal && candidateDocModal.classList.contains('open')) {
+                    closeTemporaryCandidatePopup();
+                }
+                if (event.key === 'Escape' && candidateViewModal && candidateViewModal.classList.contains('open')) {
+                    closeExistingKesediaanFormModal();
+                }
+                if (event.key === 'Escape' && candidateScoreCardModal && candidateScoreCardModal.classList.contains('open')) {
+                    closeScoreCardModal();
+                }
+            });
+
+            const candidateDocPanel = document.querySelector('#candidateDocModal .doc-modal-panel');
+            if (candidateDocPanel) {
+                candidateDocPanel.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
+            }
+
+            if (candidateViewModal) {
+                candidateViewModal.addEventListener('click', function (event) {
+                    if (event.target === candidateViewModal) {
+                        closeExistingKesediaanFormModal();
+                    }
+                });
+            }
+
+            const candidateViewPanel = document.querySelector('#candidateViewModal .doc-modal-panel');
+            if (candidateViewPanel) {
+                candidateViewPanel.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
+            }
+
+            if (candidateScoreCardModal) {
+                candidateScoreCardModal.addEventListener('click', function (event) {
+                    if (event.target === candidateScoreCardModal) {
+                        closeScoreCardModal();
+                    }
+                });
+            }
+
+            const candidateScoreCardPanel = document.querySelector('#candidateScoreCardModal .doc-modal-panel');
+            if (candidateScoreCardPanel) {
+                candidateScoreCardPanel.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
+            }
+
+            if (candidateScoreCardForm) {
+                candidateScoreCardForm.addEventListener('change', function (event) {
+                    const target = event.target;
+                    if (!target) {
+                        return;
+                    }
+
+                    const targetName = String(target.name || '');
+                    if (targetName.indexOf('scorecard_answers[') === 0) {
+                        updateScoreCardSummary();
+                    }
+                    if (target === candidateScoreCardDecision) {
+                        syncScoreCardDecisionNoteRequirement();
+                    }
+                });
+            }
+
+            if (candidateDocPihakSelect) {
+                candidateDocPihakSelect.addEventListener('change', syncNamaPihakInputState);
+            }
+
+            function applyWawancaraProcessFilter() {
+                if (!wawancaraProcessFilter) {
+                    return;
+                }
+
+                const selectedFilter = String(wawancaraProcessFilter.value || 'all').trim();
+                const candidateItems = document.querySelectorAll('.candidate-item[data-process-lanjut]');
+                const wawancaraCards = document.querySelectorAll('.rekap-card[data-wawancara-card]');
+                let visibleCandidateCount = 0;
+
+                candidateItems.forEach(function (item) {
+                    const isLanjut = item.getAttribute('data-process-lanjut') === '1';
+                    const isScreening = item.getAttribute('data-process-screening') === '1';
+                    const isScorecardSubmitted = item.getAttribute('data-process-scorecard-submitted') === '1';
+                    let shouldShow = true;
+
+                    if (selectedFilter === 'belum_lanjut') {
+                        shouldShow = !isLanjut;
+                    } else if (selectedFilter === 'lanjut') {
+                        shouldShow = isLanjut && !isScreening;
+                    } else if (selectedFilter === 'screening') {
+                        shouldShow = isScreening && !isScorecardSubmitted;
+                    } else if (selectedFilter === 'scorecard_submitted') {
+                        shouldShow = isScorecardSubmitted;
+                    }
+
+                    item.style.display = shouldShow ? '' : 'none';
+                    if (shouldShow) {
+                        visibleCandidateCount++;
+                    }
+                });
+
+                wawancaraCards.forEach(function (card) {
+                    const cardItems = card.querySelectorAll('.candidate-item[data-process-lanjut]');
+                    let hasVisibleItem = false;
+                    cardItems.forEach(function (item) {
+                        if (item.style.display !== 'none') {
+                            hasVisibleItem = true;
+                        }
+                    });
+                    card.style.display = hasVisibleItem ? '' : 'none';
+                });
+
+                if (wawancaraFilterEmpty) {
+                    wawancaraFilterEmpty.style.display = visibleCandidateCount > 0 ? 'none' : 'block';
+                }
+            }
+
+            if (wawancaraProcessFilter) {
+                wawancaraProcessFilter.addEventListener('change', function () {
+                    const selectedFilter = String(wawancaraProcessFilter.value || 'all').trim();
+                    window.location.href = buildWawancaraFilterUrl(selectedFilter);
+                });
+                applyWawancaraProcessFilter();
+            }
+
+            function sanitizeSafeUrl(value) {
+                const raw = String(value || '').trim();
+                if (raw === '') {
+                    return '';
+                }
+                const lower = raw.toLowerCase();
+                if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+                    return '';
+                }
+                return raw;
+            }
+
+            function escapeHtml(value) {
+                return String(value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($page === 'pemilihan') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+    if ($electionClosed) {
+        redirect_to_page('bidang', ['info' => 'masa-berakhir']);
+    }
+
+    $username = (string)$authUser['username'];
+    $asalCabangUser = (string)$authUser['asal_cabang'];
+    $_SESSION['role'] = (string)$authUser['role'];
+
+    $bidangList = personalize_bidang_list_for_cabang(load_bidang_data(), $asalCabangUser);
+    $bidangTitle = trim((string)($_GET['bidang'] ?? ''));
+    $bidangTitle = bidang_title_for_cabang($bidangTitle, $asalCabangUser);
+    $selectedBidang = null;
+    foreach ($bidangList as $bidangItem) {
+        if ((string)($bidangItem['title'] ?? '') === $bidangTitle) {
+            $selectedBidang = $bidangItem;
+            break;
+        }
+    }
+
+    if ($bidangTitle === '' || $selectedBidang === null) {
+        redirect_to_page('bidang');
+    }
+
+    $selectedBidangTitle = (string)$selectedBidang['title'];
+    $selectedBidangParts = bidang_title_parts($selectedBidangTitle);
+    $selectedBidangMainTitle = (string)($selectedBidangParts['main'] ?? $selectedBidangTitle);
+    if ($selectedBidangMainTitle === '') {
+        $selectedBidangMainTitle = $selectedBidangTitle;
+    }
+    $selectedBidangCabangTitle = (string)($selectedBidangParts['cabang'] ?? '');
+    $selectedBidangLabelModal = $selectedBidangMainTitle;
+    if ($selectedBidangCabangTitle !== '') {
+        $selectedBidangLabelModal .= ' ' . $selectedBidangCabangTitle;
+    }
+    if (latest_pemilihan_for($username, $selectedBidangTitle) !== null) {
+        redirect_to_page('bidang', ['info' => 'sudah-vote', 'bidang' => $selectedBidangTitle]);
+    }
+
+    $kandidatList = [];
+    foreach (load_kandidat_data() as $kandidat) {
+        $kandidatCabang = trim((string)($kandidat['asal_cabang'] ?? ''));
+        if ($kandidatCabang === $asalCabangUser) {
+            $kandidatList[] = $kandidat;
+        }
+    }
+
+    $selectedKandidatId = substr(trim((string)($_POST['kandidat_id'] ?? '')), 0, 120);
+    $selectedKandidatSearch = substr(trim((string)($_POST['kandidat_search'] ?? '')), 0, 180);
+    $saveError = '';
+    $pemilihanCsrfToken = csrf_token();
+
+    if ($method === 'POST') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $saveError = 'Sesi tidak valid. Muat ulang halaman lalu coba lagi.';
+        } elseif ($electionClosed) {
+            $saveError = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
+        } elseif ($kandidatList === []) {
+            $saveError = 'Tidak ada kandidat yang tersedia untuk cabang Anda.';
+        }
+
+        if ($saveError === '' && $selectedKandidatId === '' && $selectedKandidatSearch !== '') {
+            $foundByLabel = find_kandidat_by_option_label($kandidatList, $selectedKandidatSearch);
+            if ($foundByLabel !== null) {
+                $selectedKandidatId = (string)$foundByLabel['id'];
+            }
+        }
+
+        if ($saveError === '' && $selectedKandidatId === '') {
+            $saveError = 'Silakan pilih kandidat terlebih dahulu.';
+        }
+
+        if ($saveError === '') {
+            $selectedKandidat = find_kandidat_by_id($kandidatList, $selectedKandidatId);
+            if ($selectedKandidat === null) {
+                $saveError = 'Kandidat yang dipilih tidak valid atau bukan dari cabang Anda.';
+            } else {
+                $selectedKandidatSearch = kandidat_option_label($selectedKandidat);
+                $detail = [
+                    'id' => generate_id('pemilihan_'),
+                    'username' => $username,
+                    'asal_cabang_user' => $asalCabangUser,
+                    'bidang' => $selectedBidangTitle,
+                    'kandidat' => [
+                        'id' => (string)$selectedKandidat['id'],
+                        'nama_lengkap' => (string)$selectedKandidat['nama_lengkap'],
+                        'asal_cabang' => (string)$selectedKandidat['asal_cabang'],
+                    ],
+                    'waktu_pemilihan' => date('Y-m-d H:i:s', current_time()),
+                ];
+
+                if (save_pemilihan_detail($detail)) {
+                    redirect_to_page('bidang', ['info' => 'vote-berhasil', 'bidang' => $selectedBidangTitle]);
+                } else {
+                    $saveError = 'Bidang ini sudah pernah Anda vote atau data gagal disimpan.';
+                }
+            }
+        }
+    }
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Pemilihan</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #f3f4f6;
+                color: #111827;
+                min-height: 100vh;
+                display: grid;
+                place-items: center;
+                padding: 20px;
+            }
+            .card {
+                width: 100%;
+                max-width: 560px;
+                background: #fff;
+                border-radius: 14px;
+                padding: 24px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+                text-align: center;
+            }
+            h1 {
+                margin: 0 0 16px;
+                font-size: 28px;
+            }
+            .title-cabang {
+                margin: -8px 0 14px;
+                font-size: 14px;
+                font-weight: 700;
+                color: #475569;
+                text-align: center;
+            }
+            .desc {
+                margin: 0 0 16px;
+                line-height: 1.6;
+                color: #4b5563;
+                text-align: center;
+            }
+            .form-box {
+                margin-top: 18px;
+                padding: 16px;
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                background: #f9fafb;
+                text-align: left;
+            }
+            .form-box label {
+                display: block;
+                margin-bottom: 6px;
+                font-size: 14px;
+                color: #111827;
+                font-weight: 600;
+            }
+            .input-kandidat {
+                width: 100%;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 14px;
+                margin-bottom: 12px;
+                background: #fff;
+            }
+            .btn-submit {
+                width: 100%;
+                border: 0;
+                background: #2563eb;
+                color: #fff;
+                padding: 10px 12px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+            .btn-submit:disabled {
+                background: #94a3b8;
+                cursor: not-allowed;
+            }
+            .alert {
+                margin-top: 14px;
+                padding: 10px;
+                border-radius: 8px;
+                font-size: 14px;
+                text-align: left;
+            }
+            .alert.success {
+                background: #dcfce7;
+                color: #166534;
+            }
+            .alert.error {
+                background: #fee2e2;
+                color: #b91c1c;
+            }
+            .vote-note {
+                margin-top: 10px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: #fffbeb;
+                color: #92400e;
+                border: 1px solid #fde68a;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            body.modal-open {
+                overflow: hidden;
+            }
+            .confirm-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 50;
+                display: grid;
+                place-items: center;
+                padding: 20px;
+                background: rgba(15, 23, 42, 0.55);
+            }
+            .confirm-modal[hidden] {
+                display: none;
+            }
+            .confirm-dialog {
+                width: 100%;
+                max-width: 420px;
+                background: #fff;
+                border-radius: 12px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
+                padding: 18px;
+                text-align: left;
+                animation: popup-in 0.18s ease-out;
+            }
+            .confirm-title {
+                margin: 0 0 8px;
+                font-size: 20px;
+                color: #111827;
+            }
+            .confirm-text {
+                margin: 0 0 14px;
+                color: #374151;
+                line-height: 1.5;
+            }
+            .confirm-selected {
+                font-weight: 700;
+                color: #111827;
+            }
+            .confirm-bidang {
+                font-weight: 700;
+                color: #000000;
+            }
+            .confirm-actions {
+                display: flex;
+                gap: 10px;
+                justify-content: flex-end;
+            }
+            .confirm-btn {
+                border: 0;
+                border-radius: 8px;
+                padding: 9px 14px;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+            .confirm-btn.cancel {
+                background: #e5e7eb;
+                color: #111827;
+            }
+            .confirm-btn.ok {
+                background: #2563eb;
+                color: #fff;
+            }
+            .confirm-btn.cancel:hover {
+                background: #d1d5db;
+            }
+            .confirm-btn.ok:hover {
+                background: #1d4ed8;
+            }
+            @keyframes popup-in {
+                from {
+                    opacity: 0;
+                    transform: translateY(10px) scale(0.98);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+            .actions {
+                margin-top: 14px;
+                display: flex;
+                justify-content: center;
+            }
+            .btn-back {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                text-decoration: none;
+                background: #fff;
+                color: #1f2937;
+                padding: 10px 14px;
+                border-radius: 10px;
+                border: 1px solid #d1d5db;
+                font-size: 14px;
+                font-weight: 600;
+                transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+            }
+            .btn-back:hover {
+                background: #f9fafb;
+                border-color: #9ca3af;
+                transform: translateY(-1px);
+                box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+            }
+            .btn-back:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .btn-back:active {
+                transform: translateY(0);
+            }
+            .btn-back-arrow {
+                display: inline-block;
+                font-size: 16px;
+                line-height: 1;
+            }
+        </style>
+    </head>
+    <body>
+        <section class="card">
+            <h1><?= h($selectedBidangMainTitle) ?></h1>
+            <?php if ($selectedBidangCabangTitle !== ''): ?>
+                <p class="title-cabang"><?= h($selectedBidangCabangTitle) ?></p>
+            <?php endif; ?>
+            <p class="desc"><?= h((string)$selectedBidang['description']) ?></p>
+
+            <form class="form-box" method="post" action="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => (string)$selectedBidang['title']])) ?>">
+                <input type="hidden" name="csrf_token" value="<?= h($pemilihanCsrfToken) ?>">
+                <label for="kandidat_search">Cari & pilih kandidat majelis</label>
+                <input
+                    class="input-kandidat"
+                    id="kandidat_search"
+                    name="kandidat_search"
+                    type="text"
+                    list="kandidat_list"
+                    placeholder="Ketik nama kandidat..."
+                    autocomplete="off"
+                    value="<?= h($selectedKandidatSearch) ?>"
+                    <?= $kandidatList === [] ? 'disabled' : '' ?>
+                    required
+                >
+                <datalist id="kandidat_list">
+                    <?php foreach ($kandidatList as $kandidat): ?>
+                        <?php
+                        $kandidatId = (string)$kandidat['id'];
+                        $optionLabel = kandidat_option_label($kandidat);
+                        ?>
+                        <option
+                            value="<?= h($optionLabel) ?>"
+                            data-id="<?= h($kandidatId) ?>"
+                        ></option>
+                    <?php endforeach; ?>
+                </datalist>
+                <input type="hidden" id="kandidat_id" name="kandidat_id" value="<?= h($selectedKandidatId) ?>">
+
+                <button class="btn-submit" type="submit" <?= $kandidatList === [] ? 'disabled' : '' ?>>Simpan Pemilihan</button>
+                <p class="vote-note">Perhatian: setelah vote disimpan, pilihan kandidat pada bidang ini tidak dapat diubah.</p>
+            </form>
+
+            <?php if ($saveError !== ''): ?>
+                <div class="alert error"><?= h($saveError) ?></div>
+            <?php endif; ?>
+
+            <div class="actions">
+                <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">
+                    <span class="btn-back-arrow" aria-hidden="true">&larr;</span>
+                    <span>Kembali ke Bidang</span>
+                </a>
+            </div>
+        </section>
+        <div class="confirm-modal" id="confirm-modal" hidden>
+            <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+                <h2 class="confirm-title" id="confirm-title">Konfirmasi Pemilihan</h2>
+                <p class="confirm-text">
+                    Anda akan memilih <span class="confirm-selected" id="confirm-selected">-</span> sebagai Kandidat <span class="confirm-bidang"><?= h($selectedBidangLabelModal) ?></span>.
+                    Setelah disimpan, pilihan pada bidang ini tidak dapat diubah.
+                </p>
+                <div class="confirm-actions">
+                    <button class="confirm-btn cancel" type="button" id="confirm-cancel">Batal</button>
+                    <button class="confirm-btn ok" type="button" id="confirm-ok">Ya, Simpan</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (function () {
+                const kandidatInput = document.getElementById('kandidat_search');
+                const kandidatIdInput = document.getElementById('kandidat_id');
+                const kandidatList = document.getElementById('kandidat_list');
+                const form = document.querySelector('.form-box');
+                const confirmModal = document.getElementById('confirm-modal');
+                const confirmSelected = document.getElementById('confirm-selected');
+                const confirmCancel = document.getElementById('confirm-cancel');
+                const confirmOk = document.getElementById('confirm-ok');
+                if (!kandidatInput || !kandidatIdInput || !kandidatList || !form || !confirmModal || !confirmSelected || !confirmCancel || !confirmOk) {
+                    return;
+                }
+
+                const optionMap = new Map();
+                let submitConfirmed = false;
+                let previousFocus = null;
+                for (const option of kandidatList.options) {
+                    const value = (option.value || '').trim().toLowerCase();
+                    const id = (option.dataset.id || '').trim();
+                    if (value !== '' && id !== '') {
+                        optionMap.set(value, id);
+                    }
+                }
+
+                function syncSelectedKandidat() {
+                    const key = kandidatInput.value.trim().toLowerCase();
+                    const matchedId = optionMap.get(key) || '';
+                    kandidatIdInput.value = matchedId;
+                    kandidatInput.setCustomValidity('');
+                }
+
+                function openConfirmModal(kandidatTerpilih) {
+                    previousFocus = document.activeElement;
+                    confirmSelected.textContent = kandidatTerpilih;
+                    confirmModal.hidden = false;
+                    document.body.classList.add('modal-open');
+                    confirmOk.focus();
+                }
+
+                function closeConfirmModal() {
+                    confirmModal.hidden = true;
+                    document.body.classList.remove('modal-open');
+                    if (previousFocus && typeof previousFocus.focus === 'function') {
+                        previousFocus.focus();
+                    }
+                }
+
+                kandidatInput.addEventListener('input', syncSelectedKandidat);
+                kandidatInput.addEventListener('change', syncSelectedKandidat);
+
+                form.addEventListener('submit', function (event) {
+                    syncSelectedKandidat();
+                    if (!kandidatIdInput.value) {
+                        event.preventDefault();
+                        kandidatInput.setCustomValidity('Pilih kandidat dari daftar yang tersedia.');
+                        kandidatInput.reportValidity();
+                        return;
+                    }
+
+                    if (!submitConfirmed) {
+                        event.preventDefault();
+                        const kandidatTerpilih = kandidatInput.value.trim();
+                        const kandidatNama = kandidatTerpilih.split(' - ')[0].trim();
+                        openConfirmModal(kandidatNama || kandidatTerpilih);
+                    }
+                });
+
+                confirmCancel.addEventListener('click', function () {
+                    closeConfirmModal();
+                });
+
+                confirmOk.addEventListener('click', function () {
+                    submitConfirmed = true;
+                    closeConfirmModal();
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
+                });
+
+                confirmModal.addEventListener('click', function (event) {
+                    if (event.target === confirmModal) {
+                        closeConfirmModal();
+                    }
+                });
+
+                document.addEventListener('keydown', function (event) {
+                    if (event.key === 'Escape' && !confirmModal.hidden) {
+                        closeConfirmModal();
+                    }
+                });
+            })();
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($page !== 'login') {
+    http_response_code(404);
+    echo '404 - Halaman tidak ditemukan.';
+    exit;
+}
+?>
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            color: #111827;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 20px 14px;
+        }
+        .card {
+            width: 100%;
+            max-width: 380px;
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+        h1 {
+            margin: 0 0 16px;
+            font-size: 24px;
+        }
+        .error {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #fee2e2;
+            color: #b91c1c;
+            font-size: 14px;
+        }
+        .notice {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .notice.info {
+            background: #eff6ff;
+            color: #1e3a8a;
+            border: 1px solid #bfdbfe;
+        }
+        .notice.warning {
+            background: #fee2e2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            background: #fff;
+        }
+        button {
+            width: 100%;
+            border: 0;
+            background: #111827;
+            color: #fff;
+            padding: 11px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .hint {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #4b5563;
+        }
+        code {
+            background: #f3f4f6;
+            padding: 2px 5px;
+            border-radius: 5px;
+        }
+        body.modal-open {
+            overflow: hidden;
+        }
+        .welcome-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 60;
+            display: grid;
+            place-items: center;
+            padding: 18px;
+            background: rgba(15, 23, 42, 0.55);
+        }
+        .welcome-modal[hidden] {
+            display: none;
+        }
+        .welcome-dialog {
+            position: relative;
+            width: 100%;
+            max-width: 560px;
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-radius: 14px;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.26);
+            padding: 20px;
+            text-align: left;
+        }
+        .welcome-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 2px solid #111827;
+            border-radius: 999px;
+            background: #e5e7eb;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .welcome-close::before,
+        .welcome-close::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 14px;
+            height: 2px;
+            background: #111827;
+            border-radius: 999px;
+            transform-origin: center;
+        }
+        .welcome-close::before {
+            transform: translate(-50%, -50%) rotate(45deg);
+        }
+        .welcome-close::after {
+            transform: translate(-50%, -50%) rotate(-45deg);
+        }
+        .welcome-close:hover {
+            background: #d1d5db;
+        }
+        .welcome-close:focus-visible {
+            outline: 3px solid #93c5fd;
+            outline-offset: 2px;
+        }
+        .welcome-title {
+            margin: 0 0 10px;
+            font-size: 24px;
+            color: #111827;
+            line-height: 1.25;
+        }
+        .welcome-text {
+            margin: 0;
+            color: #374151;
+            line-height: 1.65;
+            font-size: 15px;
+        }
+    </style>
+</head>
+<body>
+    <section class="card">
+        <h1>Login</h1>
+        <?php if ($error !== ''): ?>
+            <div class="error"><?= h($error) ?></div>
+        <?php endif; ?>
+        <div class="notice info">
+            Deadline pemilihan: <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.
+        </div>
+        <?php if ($electionClosed): ?>
+            <div class="notice warning">
+                Masa pemilihan sudah berakhir pada <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.
+            </div>
+        <?php endif; ?>
+
+        <form method="post" action="<?= h(app_index_url(['page' => 'login'])) ?>">
+            <input type="hidden" name="csrf_token" value="<?= h($csrfFormToken) ?>">
+            <label for="username">Username</label>
+            <input
+                id="username"
+                name="username"
+                type="text"
+                placeholder="masukkan username akun"
+                value="<?= h($loginSelectedUsername) ?>"
+                autocomplete="username"
+                required
+                autofocus
+            >
+
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" placeholder="masukkan password akun" autocomplete="current-password" required>
+
+            <button type="submit">Masuk</button>
+        </form>
+    </section>
+
+    <div class="welcome-modal" id="welcome-modal" hidden>
+        <div class="welcome-dialog" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+            <button class="welcome-close" type="button" id="welcome-close" aria-label="Tutup popup"></button>
+            <h2 class="welcome-title" id="welcome-title"><strong>Shalom REC Indonesia!</strong></h2>
+            <p class="welcome-text">
+                Terima kasih atas partisipasi Anda dalam pemilihan kandidat Majelis REC Indonesia periode 2026-2029.
+                Suara Anda adalah wujud kasih yang nyata bagi pembangunan Tubuh Kristus. Mari nyatakan kehendak-Nya
+                melalui pilihan Anda hari ini. Selamat memilih dengan sukacita!
+            </p>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const SESSION_KEY = 'majelis_welcome_seen';
+            const modal = document.getElementById('welcome-modal');
+            const closeButton = document.getElementById('welcome-close');
+            if (!modal || !closeButton) {
+                return;
+            }
+
+            let shouldShow = true;
+            try {
+                shouldShow = sessionStorage.getItem(SESSION_KEY) !== '1';
+            } catch (error) {
+                shouldShow = true;
+            }
+            if (!shouldShow) {
+                return;
+            }
+
+            function closeModal() {
+                modal.hidden = true;
+                document.body.classList.remove('modal-open');
+                try {
+                    sessionStorage.setItem(SESSION_KEY, '1');
+                } catch (error) {
+                    // Ignore storage errors; popup will show again.
+                }
+            }
+
+            modal.hidden = false;
+            document.body.classList.add('modal-open');
+            closeButton.focus();
+
+            closeButton.addEventListener('click', closeModal);
+            modal.addEventListener('click', function (event) {
+                if (event.target === modal) {
+                    closeModal();
+                }
+            });
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && !modal.hidden) {
+                    closeModal();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# BEGIN MAJELIS_SECURITY
+Options -Indexes
+<FilesMatch "\.json$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Deny from all
+    </IfModule>
+</FilesMatch>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^\.session_store(/|$) - [F,L]
+    RewriteRule (^|/)sess_[A-Za-z0-9]+$ - [F,L]
+</IfModule>
+# END MAJELIS_SECURITY
