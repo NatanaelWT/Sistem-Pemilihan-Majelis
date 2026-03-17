@@ -184,13 +184,18 @@ Admin dapat meng-upload file `.xlsx` dengan dua sheet:
 - Jika user sudah ada (nama + cabang sama), data akan diperbarui
 
 ### Sheet: `MASTER KANDIDAT`
-| Kolom Wajib | Keterangan |
-|---|---|
-| `NAMA LENGKAP` | Nama lengkap kandidat |
-| `CABANG` | Nama cabang gereja |
+| Kolom | Status | Keterangan |
+|---|---|---|
+| `NAMA LENGKAP` | Wajib | Nama lengkap kandidat |
+| `CABANG` | Wajib | Nama cabang gereja |
+| `TIPE PENCALONAN` | Opsional | `SEMUA`, `SEMUA_KECUALI_KETUA_LOKAL`, atau `KETUA_LOKAL_SAJA` |
 
 - ID kandidat di-generate otomatis dari nama + cabang
 - Jika kandidat sudah ada, data akan diperbarui
+- Jika `TIPE PENCALONAN` kosong atau kolom tidak disertakan, kandidat baru default ke semua posisi dan kandidat lama mempertahankan tipe pencalonan sebelumnya
+- `SEMUA`: bisa dipilih untuk semua posisi, termasuk Ketua Pengurus Lokal
+- `SEMUA_KECUALI_KETUA_LOKAL`: bisa dipilih untuk semua posisi selain Ketua Pengurus Lokal
+- `KETUA_LOKAL_SAJA`: hanya bisa dipilih untuk Ketua Pengurus Lokal
 
 **Batas ukuran file:** 8 MB
 
@@ -325,5 +330,6 @@ REC Kutisari · REC Nginden · REC Darmo · REC Merr · REC Galaxy Mall · REC B
 - Data disimpan dalam format JSON; tidak memerlukan database.
 - File JSON dilindungi dari akses publik melalui `.htaccess` yang dibuat otomatis.
 - Bidang "Ketua Pengurus Lokal" secara otomatis di-personalisasi per cabang user yang login.
+- Kandidat dapat dibatasi untuk semua posisi, semua posisi kecuali Ketua Pengurus Lokal, atau Ketua Pengurus Lokal saja.
 - Voting bersifat **satu kali per bidang per user** dan tidak dapat diubah setelah disimpan.
 - Dokumen kesediaan yang diupload disimpan dengan nama acak (random hex) di direktori aman.

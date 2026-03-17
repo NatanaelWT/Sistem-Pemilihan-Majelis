@@ -1519,11 +1519,174 @@ function default_kandidat_data(): array
                 'id' => $slug . '-' . $num,
                 'nama_lengkap' => $first . ' ' . $middle . ' ' . $last,
                 'asal_cabang' => $cabang,
+                'bisa_semua_posisi' => true,
+                'bisa_ketua_pengurus_lokal' => true,
             ];
         }
     }
 
     return $result;
+}
+
+function default_kandidat_pencalonan_flags(): array
+{
+    return [
+        'bisa_semua_posisi' => true,
+        'bisa_ketua_pengurus_lokal' => true,
+    ];
+}
+
+function normalize_boolean_flag($value, bool $default = false): bool
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return ((int)$value) !== 0;
+    }
+
+    $normalized = normalize_header_key((string)$value);
+    if ($normalized === '') {
+        return $default;
+    }
+
+    if (in_array($normalized, ['1', 'true', 'ya', 'yes', 'y', 'bisa', 'aktif'], true)) {
+        return true;
+    }
+
+    if (in_array($normalized, ['0', 'false', 'tidak', 'no', 'n', 'tidakbisa', 'nonaktif'], true)) {
+        return false;
+    }
+
+    return $default;
+}
+
+function kandidat_pencalonan_flags_from_record(array $item, ?array $fallbackFlags = null): array
+{
+    $defaults = default_kandidat_pencalonan_flags();
+    if (is_array($fallbackFlags)) {
+        $defaults = [
+            'bisa_semua_posisi' => normalize_boolean_flag(
+                $fallbackFlags['bisa_semua_posisi'] ?? $defaults['bisa_semua_posisi'],
+                $defaults['bisa_semua_posisi']
+            ),
+            'bisa_ketua_pengurus_lokal' => normalize_boolean_flag(
+                $fallbackFlags['bisa_ketua_pengurus_lokal'] ?? $defaults['bisa_ketua_pengurus_lokal'],
+                $defaults['bisa_ketua_pengurus_lokal']
+            ),
+        ];
+    }
+
+    return [
+        'bisa_semua_posisi' => normalize_boolean_flag(
+            $item['bisa_semua_posisi'] ?? $defaults['bisa_semua_posisi'],
+            $defaults['bisa_semua_posisi']
+        ),
+        'bisa_ketua_pengurus_lokal' => normalize_boolean_flag(
+            $item['bisa_ketua_pengurus_lokal'] ?? $defaults['bisa_ketua_pengurus_lokal'],
+            $defaults['bisa_ketua_pengurus_lokal']
+        ),
+    ];
+}
+
+function build_kandidat_record(string $id, string $namaLengkap, string $asalCabang, array $flags = []): array
+{
+    $normalizedFlags = kandidat_pencalonan_flags_from_record($flags);
+    return [
+        'id' => $id,
+        'nama_lengkap' => $namaLengkap,
+        'asal_cabang' => $asalCabang,
+        'bisa_semua_posisi' => $normalizedFlags['bisa_semua_posisi'],
+        'bisa_ketua_pengurus_lokal' => $normalizedFlags['bisa_ketua_pengurus_lokal'],
+    ];
+}
+
+function normalize_kandidat_tipe_pencalonan(string $value): string
+{
+    $normalized = normalize_header_key($value);
+    if ($normalized === '') {
+        return '';
+    }
+
+    $allValues = [
+        'semua',
+        'all',
+        'semuadanketualokal',
+        'semuaposisidanketualokal',
+        'semuabidangdanketualokal',
+    ];
+    if (in_array($normalized, $allValues, true)) {
+        return 'semua';
+    }
+
+    $allExceptKetuaLokalValues = [
+        'semuakecualiketualokal',
+        'semuakecualiketuapenguruslokal',
+        'semuaposisikecualiketualokal',
+        'semuaposisikecualiketuapenguruslokal',
+        'semuabidangkecualiketualokal',
+        'semuabidangkecualiketuapenguruslokal',
+        'tanpaketualokal',
+        'tanpaketuapenguruslokal',
+        'nonketualokal',
+        'nonketuapenguruslokal',
+    ];
+    if (in_array($normalized, $allExceptKetuaLokalValues, true)) {
+        return 'semua_kecuali_ketua_lokal';
+    }
+
+    $ketuaLokalOnlyValues = [
+        'ketualokalsaja',
+        'ketuapenguruslokalsaja',
+        'hanyaketualokal',
+        'hanyaketuapenguruslokal',
+    ];
+    if (in_array($normalized, $ketuaLokalOnlyValues, true)) {
+        return 'ketua_lokal_saja';
+    }
+
+    return '';
+}
+
+function kandidat_pencalonan_flags_from_import(string $value, array $fallbackFlags): ?array
+{
+    $value = trim($value);
+    if ($value === '') {
+        return kandidat_pencalonan_flags_from_record($fallbackFlags);
+    }
+
+    $normalizedType = normalize_kandidat_tipe_pencalonan($value);
+    if ($normalizedType === 'semua') {
+        return [
+            'bisa_semua_posisi' => true,
+            'bisa_ketua_pengurus_lokal' => true,
+        ];
+    }
+    if ($normalizedType === 'semua_kecuali_ketua_lokal') {
+        return [
+            'bisa_semua_posisi' => true,
+            'bisa_ketua_pengurus_lokal' => false,
+        ];
+    }
+    if ($normalizedType === 'ketua_lokal_saja') {
+        return [
+            'bisa_semua_posisi' => false,
+            'bisa_ketua_pengurus_lokal' => true,
+        ];
+    }
+
+    return null;
+}
+
+function kandidat_bisa_dipilih_untuk_bidang(array $kandidat, string $bidang): bool
+{
+    $flags = kandidat_pencalonan_flags_from_record($kandidat);
+    if (is_ketua_pengurus_lokal_bidang($bidang)) {
+        return $flags['bisa_ketua_pengurus_lokal'];
+    }
+
+    return $flags['bisa_semua_posisi'];
 }
 
 function load_kandidat_data(): array
@@ -1551,11 +1714,12 @@ function load_kandidat_data(): array
             continue;
         }
 
-        $result[] = [
-            'id' => $id,
-            'nama_lengkap' => $namaLengkap,
-            'asal_cabang' => $asalCabang,
-        ];
+        $result[] = build_kandidat_record(
+            $id,
+            $namaLengkap,
+            $asalCabang,
+            kandidat_pencalonan_flags_from_record($item)
+        );
     }
 
     // Jika file kandidat valid tapi kosong, pertahankan kosong (jangan fallback ke data sample).
@@ -2252,6 +2416,11 @@ function import_users_and_kandidat_from_xlsx(string $xlsxPath): array
     $kandidatHeaderMap = extract_sheet_header_map((array)$kandidatRows[0]);
     $idxKandidatNama = header_index($kandidatHeaderMap, ['nama lengkap', 'namalengkap', 'nama']);
     $idxKandidatCabang = header_index($kandidatHeaderMap, ['cabang']);
+    $idxKandidatTipePencalonan = header_index($kandidatHeaderMap, [
+        'tipe pencalonan',
+        'kategori pencalonan',
+        'jenis pencalonan',
+    ]);
     if ($idxKandidatNama === null || $idxKandidatCabang === null) {
         $result['errors'][] = 'Header sheet kandidat wajib berisi: NAMA LENGKAP, CABANG.';
         return $result;
@@ -2261,6 +2430,9 @@ function import_users_and_kandidat_from_xlsx(string $xlsxPath): array
         $row = (array)$kandidatRows[$i];
         $nama = normalize_username((string)($row[$idxKandidatNama] ?? ''));
         $cabangRaw = trim((string)($row[$idxKandidatCabang] ?? ''));
+        $tipePencalonanRaw = $idxKandidatTipePencalonan !== null
+            ? trim((string)($row[$idxKandidatTipePencalonan] ?? ''))
+            : '';
 
         if ($nama === '' && $cabangRaw === '') {
             continue;
@@ -2276,6 +2448,20 @@ function import_users_and_kandidat_from_xlsx(string $xlsxPath): array
         }
 
         $kandidatKey = strtolower($nama) . '|' . strtolower($cabang);
+        $existingFlags = default_kandidat_pencalonan_flags();
+        if (isset($kandidatKeyIndex[$kandidatKey])) {
+            $existingFlags = kandidat_pencalonan_flags_from_record((array)$existingKandidat[$kandidatKeyIndex[$kandidatKey]]);
+        }
+        $importedFlags = kandidat_pencalonan_flags_from_import($tipePencalonanRaw, $existingFlags);
+        if ($importedFlags === null) {
+            $result['summary']['kandidat_skipped']++;
+            if (count($result['warnings']) < 200) {
+                $result['warnings'][] = 'Baris kandidat #' . ($i + 1)
+                    . ' dilewati karena TIPE PENCALONAN tidak valid. Gunakan: SEMUA, SEMUA_KECUALI_KETUA_LOKAL, atau KETUA_LOKAL_SAJA.';
+            }
+            continue;
+        }
+
         if (isset($kandidatKeyIndex[$kandidatKey])) {
             $idx = $kandidatKeyIndex[$kandidatKey];
             $existingId = trim((string)($existingKandidat[$idx]['id'] ?? ''));
@@ -2285,19 +2471,11 @@ function import_users_and_kandidat_from_xlsx(string $xlsxPath): array
                 $usedKandidatIds[$existingId] = true;
             }
 
-            $existingKandidat[$idx] = [
-                'id' => $existingId,
-                'nama_lengkap' => $nama,
-                'asal_cabang' => $cabang,
-            ];
+            $existingKandidat[$idx] = build_kandidat_record($existingId, $nama, $cabang, $importedFlags);
             $result['summary']['kandidat_updated']++;
         } else {
             $newId = generate_import_kandidat_id($nama, $cabang, $usedKandidatIds);
-            $existingKandidat[] = [
-                'id' => $newId,
-                'nama_lengkap' => $nama,
-                'asal_cabang' => $cabang,
-            ];
+            $existingKandidat[] = build_kandidat_record($newId, $nama, $cabang, $importedFlags);
             $kandidatKeyIndex[$kandidatKey] = count($existingKandidat) - 1;
             $result['summary']['kandidat_inserted']++;
             $knownCabang[] = $cabang;
@@ -6308,6 +6486,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                     <p class="import-note">
                         Upload file template Excel (.xlsx) dengan 2 sheet: <strong>MASTER PEMILIH</strong> dan <strong>MASTER KANDIDAT</strong>.
                         User import otomatis memakai role <strong>user</strong>, username format nama depan + inisial nama berikutnya, dan password dari 6 digit belakang <strong>Nomor Telpon</strong>.
+                        Sheet kandidat juga dapat memakai kolom opsional <strong>TIPE PENCALONAN</strong> dengan nilai <strong>SEMUA</strong>, <strong>SEMUA_KECUALI_KETUA_LOKAL</strong>, atau <strong>KETUA_LOKAL_SAJA</strong>.
                     </p>
                     <form class="import-form" method="post" action="<?= h(app_index_url(['page' => 'dashboard'])) ?>" enctype="multipart/form-data">
                         <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
@@ -9302,7 +9481,7 @@ if ($page === 'pemilihan') {
     $kandidatList = [];
     foreach (load_kandidat_data() as $kandidat) {
         $kandidatCabang = trim((string)($kandidat['asal_cabang'] ?? ''));
-        if ($kandidatCabang === $asalCabangUser) {
+        if ($kandidatCabang === $asalCabangUser && kandidat_bisa_dipilih_untuk_bidang($kandidat, $selectedBidangTitle)) {
             $kandidatList[] = $kandidat;
         }
     }
@@ -9319,7 +9498,7 @@ if ($page === 'pemilihan') {
         } elseif ($electionClosed) {
             $saveError = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
         } elseif ($kandidatList === []) {
-            $saveError = 'Tidak ada kandidat yang tersedia untuk cabang Anda.';
+            $saveError = 'Tidak ada kandidat yang tersedia untuk bidang ini di cabang Anda.';
         }
 
         if ($saveError === '' && $selectedKandidatId === '' && $selectedKandidatSearch !== '') {
@@ -9336,7 +9515,7 @@ if ($page === 'pemilihan') {
         if ($saveError === '') {
             $selectedKandidat = find_kandidat_by_id($kandidatList, $selectedKandidatId);
             if ($selectedKandidat === null) {
-                $saveError = 'Kandidat yang dipilih tidak valid atau bukan dari cabang Anda.';
+                $saveError = 'Kandidat yang dipilih tidak valid, tidak tersedia untuk bidang ini, atau bukan dari cabang Anda.';
             } else {
                 $selectedKandidatSearch = kandidat_option_label($selectedKandidat);
                 $detail = [
