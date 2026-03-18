@@ -23,8 +23,8 @@ const LOGIN_MAX_ATTEMPTS_PER_IP = 25;
 const LOGIN_WINDOW_SECONDS = 15 * 60;
 const LOGIN_BLOCK_SECONDS = 15 * 60;
 
-const ELECTION_DEADLINE_END = '2026-03-31 23:59:59';
-const ELECTION_DEADLINE_LABEL = '31 Maret 2026';
+const ELECTION_DEADLINE_END = '2026-03-29 23:59:59';
+const ELECTION_DEADLINE_LABEL = '29 Maret 2026';
 
 function is_https_request(): bool
 {
@@ -170,11 +170,102 @@ function generate_id(string $prefix): string
 function normalize_role(string $role): string
 {
     $role = strtolower(trim($role));
+    $role = str_replace(['-', ' '], '_', $role);
     return match ($role) {
         'admin' => 'admin',
         'pewawancara' => 'pewawancara',
+        'gembala_lokal', 'gembalalokal' => 'gembala_lokal',
         default => 'user',
     };
+}
+
+function role_priority(string $role): int
+{
+    return match (normalize_role($role)) {
+        'admin' => 0,
+        'pewawancara' => 1,
+        'gembala_lokal' => 2,
+        default => 3,
+    };
+}
+
+function normalize_role_list($roles): array
+{
+    $items = [];
+    if (is_array($roles)) {
+        $items = $roles;
+    } elseif (is_string($roles)) {
+        $trimmed = trim($roles);
+        if ($trimmed !== '') {
+            $items = preg_split('/\s*[,;|]\s*/', $trimmed) ?: [$trimmed];
+        }
+    }
+
+    $normalized = [];
+    $seen = [];
+    foreach ($items as $item) {
+        if (!is_string($item) && !is_numeric($item)) {
+            continue;
+        }
+        $role = normalize_role((string)$item);
+        if (isset($seen[$role])) {
+            continue;
+        }
+        $normalized[] = $role;
+        $seen[$role] = true;
+    }
+
+    if ($normalized === []) {
+        return ['user'];
+    }
+
+    usort($normalized, static function (string $left, string $right): int {
+        return role_priority($left) <=> role_priority($right);
+    });
+
+    return $normalized;
+}
+
+function user_roles_from_record(array $user): array
+{
+    $rawRoles = [];
+    if (array_key_exists('roles', $user)) {
+        $rawRoles = (array)$user['roles'];
+    }
+    $rawRole = trim((string)($user['role'] ?? ''));
+    if ($rawRole !== '') {
+        $rawRoles[] = $rawRole;
+    }
+    if ($rawRoles === []) {
+        $rawRoles[] = 'user';
+    }
+    return normalize_role_list($rawRoles);
+}
+
+function primary_role_from_record(array $user): string
+{
+    $roles = user_roles_from_record($user);
+    return (string)($roles[0] ?? 'user');
+}
+
+function user_has_role(array $user, string $role): bool
+{
+    return in_array(normalize_role($role), user_roles_from_record($user), true);
+}
+
+function current_session_roles(): array
+{
+    $sessionRoles = $_SESSION['roles'] ?? null;
+    if (is_array($sessionRoles)) {
+        return normalize_role_list($sessionRoles);
+    }
+    return normalize_role_list((string)($_SESSION['role'] ?? 'user'));
+}
+
+function sync_session_roles(array $user): void
+{
+    $_SESSION['role'] = primary_role_from_record($user);
+    $_SESSION['roles'] = user_roles_from_record($user);
 }
 
 start_secure_session();
@@ -216,14 +307,34 @@ function is_logged_in(): bool
 
 function is_admin_user(): bool
 {
-    $role = strtolower(trim((string)($_SESSION['role'] ?? '')));
-    return $role === 'admin';
+    return in_array('admin', current_session_roles(), true);
 }
 
 function can_access_wawancara_role(string $role): bool
 {
-    $role = normalize_role($role);
-    return $role === 'admin' || $role === 'pewawancara';
+    return can_access_wawancara_roles([$role]);
+}
+
+function can_access_wawancara_roles(array $roles): bool
+{
+    $roles = normalize_role_list($roles);
+    return in_array('admin', $roles, true) || in_array('pewawancara', $roles, true);
+}
+
+function can_access_wawancara_user(array $user): bool
+{
+    return can_access_wawancara_roles(user_roles_from_record($user));
+}
+
+function can_access_gembala_lokal_roles(array $roles): bool
+{
+    $roles = normalize_role_list($roles);
+    return in_array('gembala_lokal', $roles, true);
+}
+
+function can_access_gembala_lokal_user(array $user): bool
+{
+    return can_access_gembala_lokal_roles(user_roles_from_record($user));
 }
 
 function h(string $value): string
@@ -336,49 +447,7 @@ function default_user_data(): array
             'password' => '010180',
             'asal_cabang' => 'REC Kutisari',
             'role' => 'admin',
-        ],
-        [
-            'nama_lengkap' => 'Budi Santoso',
-            'username' => 'budis',
-            'password' => '150190',
-            'asal_cabang' => 'REC Kutisari',
-            'role' => 'user',
-        ],
-        [
-            'nama_lengkap' => 'Sinta Anggraini',
-            'username' => 'sintaa',
-            'password' => '200292',
-            'asal_cabang' => 'REC Nginden',
-            'role' => 'user',
-        ],
-        [
-            'nama_lengkap' => 'David Wijaya',
-            'username' => 'davidw',
-            'password' => '081289',
-            'asal_cabang' => 'REC Darmo',
-            'role' => 'user',
-        ],
-        [
-            'nama_lengkap' => 'Rani Kristina',
-            'username' => 'ranik',
-            'password' => '031195',
-            'asal_cabang' => 'REC Merr',
-            'role' => 'user',
-        ],
-        [
-            'nama_lengkap' => 'Ferry Halim',
-            'username' => 'ferryh',
-            'password' => '270793',
-            'asal_cabang' => 'REC Galaxy Mall',
-            'role' => 'user',
-        ],
-        [
-            'nama_lengkap' => 'Lisa Gunawan',
-            'username' => 'lisag',
-            'password' => '120498',
-            'asal_cabang' => 'REC Batam',
-            'role' => 'user',
-        ],
+        ]
     ];
 }
 
@@ -749,7 +818,8 @@ function load_user_data(): array
 
         $password = normalize_password((string)($item['password'] ?? ''));
         $asalCabang = trim((string)($item['asal_cabang'] ?? ''));
-        $role = normalize_role((string)($item['role'] ?? 'user'));
+        $roles = user_roles_from_record($item);
+        $role = (string)($roles[0] ?? 'user');
 
         if ($rawNamaLengkap === '' || $loginUsername === '' || $password === '' || $asalCabang === '') {
             continue;
@@ -761,6 +831,7 @@ function load_user_data(): array
             'password' => $password,
             'asal_cabang' => $asalCabang,
             'role' => $role,
+            'roles' => $roles,
         ];
     }
 
@@ -2876,7 +2947,7 @@ function find_interviewer_user_by_login_username(array $users, string $loginUser
         if (!is_array($user)) {
             continue;
         }
-        if (normalize_role((string)($user['role'] ?? 'user')) !== 'pewawancara') {
+        if (!user_has_role($user, 'pewawancara')) {
             continue;
         }
 
@@ -3134,16 +3205,16 @@ function sanitize_download_filename(string $name): string
 {
     $name = trim($name);
     if ($name === '') {
-        return 'dokumen-kesediaan';
+        return 'bukti-foto-pertemuan';
     }
 
     $name = preg_replace('/[^\w.\- ]+/u', '-', $name);
     if (!is_string($name)) {
-        return 'dokumen-kesediaan';
+        return 'bukti-foto-pertemuan';
     }
     $name = trim($name, ".- \t\n\r\0\x0B");
     if ($name === '') {
-        return 'dokumen-kesediaan';
+        return 'bukti-foto-pertemuan';
     }
     return $name;
 }
@@ -3155,7 +3226,7 @@ function save_kesediaan_uploaded_file(array $uploadedFile): array
         $message = match ($uploadError) {
             UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Ukuran file melebihi batas upload.',
             UPLOAD_ERR_PARTIAL => 'Upload file tidak selesai.',
-            UPLOAD_ERR_NO_FILE => 'File dokumen kesediaan belum dipilih.',
+            UPLOAD_ERR_NO_FILE => 'File bukti foto pertemuan belum dipilih.',
             UPLOAD_ERR_NO_TMP_DIR => 'Folder temporary upload tidak tersedia.',
             UPLOAD_ERR_CANT_WRITE => 'File upload gagal ditulis ke disk.',
             UPLOAD_ERR_EXTENSION => 'Upload file dibatalkan oleh ekstensi PHP.',
@@ -3185,7 +3256,6 @@ function save_kesediaan_uploaded_file(array $uploadedFile): array
     }
 
     $allowedMimeExtensions = [
-        'application/pdf' => 'pdf',
         'image/jpeg' => 'jpg',
         'image/png' => 'png',
         'image/webp' => 'webp',
@@ -3197,7 +3267,7 @@ function save_kesediaan_uploaded_file(array $uploadedFile): array
     ];
 
     if ($mimeType === '' || !isset($allowedMimeExtensions[$mimeType])) {
-        return ['ok' => false, 'message' => 'Format file harus PDF atau gambar (jpg/png/webp/gif/bmp/tiff/heic).'];
+        return ['ok' => false, 'message' => 'Format file harus gambar (jpg/png/webp/gif/bmp/tiff/heic/heif).'];
     }
 
     $uploadDir = kesediaan_upload_dir();
@@ -3206,7 +3276,7 @@ function save_kesediaan_uploaded_file(array $uploadedFile): array
     }
 
     $ext = $allowedMimeExtensions[$mimeType];
-    $storedFilename = 'kesediaan-' . random_hex(12) . '.' . $ext;
+    $storedFilename = 'foto-pertemuan-' . random_hex(12) . '.' . $ext;
     $targetPath = $uploadDir . '/' . $storedFilename;
     if (!@move_uploaded_file($tmpPath, $targetPath)) {
         return ['ok' => false, 'message' => 'Gagal menyimpan file upload.'];
@@ -4466,11 +4536,13 @@ function current_authenticated_user(array $users): ?array
         }
 
         if ($matchedSessionIdentity && hash_equals($sessionCabang, $cabang)) {
+            $roles = user_roles_from_record($user);
             return [
                 'username' => $namaLengkap,
                 'login_username' => $loginUsername,
                 'asal_cabang' => $cabang,
-                'role' => normalize_role((string)($user['role'] ?? 'user')),
+                'role' => (string)($roles[0] ?? 'user'),
+                'roles' => $roles,
             ];
         }
     }
@@ -4907,7 +4979,7 @@ if ($page === 'login' && $method === 'POST') {
                 register_failed_login($loginSelectedUsername, $clientIp);
                 $error = 'Username atau password salah.';
             } else {
-                $foundRole = normalize_role((string)($foundUser['role'] ?? 'user'));
+                $foundRole = primary_role_from_record($foundUser);
 
                 if ($electionClosed && $foundRole !== 'admin') {
                     register_failed_login($loginSelectedUsername, $clientIp);
@@ -4919,7 +4991,7 @@ if ($page === 'login' && $method === 'POST') {
                     $_SESSION['username'] = normalize_username((string)($foundUser['nama_lengkap'] ?? $foundUser['username'] ?? ''));
                     $_SESSION['login_username'] = normalize_login_username((string)($foundUser['username'] ?? ''));
                     $_SESSION['asal_cabang'] = trim((string)$foundUser['asal_cabang']);
-                    $_SESSION['role'] = $foundRole;
+                    sync_session_roles($foundUser);
                     $_SESSION['user_auth_key'] = hash('sha256', normalize_password((string)($foundUser['password'] ?? '')));
                     $_SESSION['fingerprint'] = auth_fingerprint();
                     $_SESSION['csrf_token'] = random_hex(32);
@@ -4936,7 +5008,7 @@ if ($page === 'kesediaan_file') {
         http_response_code(403);
         exit('403 - Akses ditolak.');
     }
-    if (!can_access_wawancara_role((string)$authUser['role'])) {
+    if (!can_access_wawancara_user($authUser)) {
         http_response_code(403);
         exit('403 - Akses ditolak.');
     }
@@ -4953,8 +5025,7 @@ if ($page === 'kesediaan_file') {
         exit('404 - File tidak ditemukan.');
     }
 
-    $authRole = normalize_role((string)($authUser['role'] ?? 'user'));
-    if ($authRole === 'pewawancara') {
+    if (user_has_role($authUser, 'pewawancara') && !user_has_role($authUser, 'admin')) {
         $currentLogin = normalize_login_username((string)($authUser['login_username'] ?? ''));
         $formKey = trim((string)($formRecord['key'] ?? ''));
         if ($formKey === '') {
@@ -5007,7 +5078,7 @@ if ($page === 'kesediaan_file') {
     $isInlineAllowed = strpos($mimeType, 'image/') === 0 || $mimeType === 'application/pdf';
     $disposition = (!$downloadRequested && $isInlineAllowed) ? 'inline' : 'attachment';
     $fileName = sanitize_download_filename($originalName);
-    if ($fileName === 'dokumen-kesediaan') {
+    if ($fileName === 'bukti-foto-pertemuan') {
         $ext = kesediaan_file_extension($storedPath);
         if ($ext !== '') {
             $fileName .= '.' . $ext;
@@ -5046,9 +5117,10 @@ if ($page === 'bidang') {
 
     $username = (string)$authUser['username'];
     $asalCabang = (string)$authUser['asal_cabang'];
-    $isAdmin = (string)$authUser['role'] === 'admin';
-    $canAccessWawancara = can_access_wawancara_role((string)$authUser['role']);
-    $_SESSION['role'] = (string)$authUser['role'];
+    $isAdmin = user_has_role($authUser, 'admin');
+    $canAccessWawancara = can_access_wawancara_user($authUser);
+    $canAccessGembalaLokal = can_access_gembala_lokal_user($authUser);
+    sync_session_roles($authUser);
 
     if ($asalCabang === '') {
         $asalCabang = '-';
@@ -5071,6 +5143,8 @@ if ($page === 'bidang') {
         $infoMessage = 'Halaman dashboard hanya dapat diakses oleh admin.';
     } elseif ($info === 'wawancara-only') {
         $infoMessage = 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.';
+    } elseif ($info === 'gembala-local-only') {
+        $infoMessage = 'Halaman pantauan cabang hanya dapat diakses oleh gembala lokal.';
     } elseif ($info === 'masa-berakhir') {
         $infoMessage = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
     }
@@ -5181,6 +5255,12 @@ if ($page === 'bidang') {
             }
             .btn-wawancara:hover {
                 background: #0d9488;
+            }
+            .btn-gembala {
+                background: #1d4ed8;
+            }
+            .btn-gembala:hover {
+                background: #1e40af;
             }
             .grid {
                 display: grid;
@@ -5369,6 +5449,9 @@ if ($page === 'bidang') {
                     <?php if ($canAccessWawancara): ?>
                         <a class="btn btn-wawancara" href="<?= h(app_index_url(['page' => 'wawancara'])) ?>">Wawancara</a>
                     <?php endif; ?>
+                    <?php if ($canAccessGembalaLokal): ?>
+                        <a class="btn btn-gembala" href="<?= h(app_index_url(['page' => 'gembala_lokal'])) ?>">Pantauan Cabang</a>
+                    <?php endif; ?>
                     <form class="logout-form" method="post" action="<?= h(app_index_url(['page' => 'logout'])) ?>">
                         <input type="hidden" name="csrf_token" value="<?= h($logoutToken) ?>">
                         <button class="btn" type="submit">Logout</button>
@@ -5426,13 +5509,438 @@ if ($page === 'bidang') {
     exit;
 }
 
+if ($page === 'gembala_lokal') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+    if (!can_access_gembala_lokal_user($authUser)) {
+        redirect_to_page('bidang', ['info' => 'gembala-local-only']);
+    }
+
+    $username = (string)$authUser['username'];
+    $asalCabang = trim((string)$authUser['asal_cabang']);
+    sync_session_roles($authUser);
+    if ($asalCabang === '') {
+        $asalCabang = '-';
+    }
+
+    $logoutToken = csrf_token();
+    $allUsers = load_user_data();
+    $allBidang = load_bidang_data();
+    $cabangKey = normalize_header_key($asalCabang);
+    $bidangCabangList = personalize_bidang_list_for_cabang($allBidang, $asalCabang);
+    $bidangCabangMap = [];
+    foreach ($bidangCabangList as $bidangItem) {
+        if (!is_array($bidangItem)) {
+            continue;
+        }
+        $bidangTitle = trim((string)($bidangItem['title'] ?? ''));
+        if ($bidangTitle !== '') {
+            $bidangCabangMap[$bidangTitle] = true;
+        }
+    }
+    $totalBidangCabang = count($bidangCabangMap);
+
+    $voteItems = (array)(load_pemilihan_data()['pemilihan'] ?? []);
+    $voteCountByUser = [];
+    foreach ($voteItems as $voteItem) {
+        if (!is_array($voteItem)) {
+            continue;
+        }
+
+        $voteCabang = trim((string)($voteItem['asal_cabang_user'] ?? ''));
+        if ($voteCabang === '' || normalize_header_key($voteCabang) !== $cabangKey) {
+            continue;
+        }
+
+        $voteUser = normalize_username((string)($voteItem['username'] ?? ''));
+        if ($voteUser === '') {
+            continue;
+        }
+
+        $voteBidang = normalize_vote_bidang_title((string)($voteItem['bidang'] ?? ''), $voteCabang);
+        if ($voteBidang === '' || !isset($bidangCabangMap[$voteBidang])) {
+            continue;
+        }
+
+        if (!isset($voteCountByUser[$voteUser])) {
+            $voteCountByUser[$voteUser] = [];
+        }
+        $voteCountByUser[$voteUser][$voteBidang] = true;
+    }
+
+    $branchUsers = [];
+    foreach ($allUsers as $userItem) {
+        if (!is_array($userItem)) {
+            continue;
+        }
+
+        $userCabang = trim((string)($userItem['asal_cabang'] ?? ''));
+        if ($userCabang === '' || normalize_header_key($userCabang) !== $cabangKey) {
+            continue;
+        }
+        if (user_has_role($userItem, 'admin')) {
+            continue;
+        }
+
+        $namaLengkap = normalize_username((string)($userItem['nama_lengkap'] ?? $userItem['username'] ?? ''));
+        $loginUsername = normalize_login_username((string)($userItem['username'] ?? ''));
+        if ($namaLengkap === '' || $loginUsername === '') {
+            continue;
+        }
+
+        $filledBidang = isset($voteCountByUser[$namaLengkap]) ? count((array)$voteCountByUser[$namaLengkap]) : 0;
+        $remainingBidang = max(0, $totalBidangCabang - $filledBidang);
+        $statusKey = $remainingBidang <= 0
+            ? 'selesai'
+            : ($filledBidang > 0 ? 'belum_lengkap' : 'belum_vote');
+        $statusLabel = match ($statusKey) {
+            'selesai' => 'Selesai',
+            'belum_lengkap' => 'Belum Lengkap',
+            default => 'Belum Vote',
+        };
+
+        $branchUsers[] = [
+            'nama_lengkap' => $namaLengkap,
+            'login_username' => $loginUsername,
+            'filled_bidang' => $filledBidang,
+            'remaining_bidang' => $remainingBidang,
+            'total_bidang' => $totalBidangCabang,
+            'status_key' => $statusKey,
+            'status_label' => $statusLabel,
+        ];
+    }
+
+    usort($branchUsers, static function (array $a, array $b): int {
+        $priority = [
+            'belum_vote' => 0,
+            'belum_lengkap' => 1,
+            'selesai' => 2,
+        ];
+        $statusCompare = ($priority[(string)($a['status_key'] ?? '')] ?? 99)
+            <=> ($priority[(string)($b['status_key'] ?? '')] ?? 99);
+        if ($statusCompare !== 0) {
+            return $statusCompare;
+        }
+        return strnatcasecmp((string)($a['nama_lengkap'] ?? ''), (string)($b['nama_lengkap'] ?? ''));
+    });
+
+    $pendingUsers = [];
+    $belumVoteCount = 0;
+    $belumLengkapCount = 0;
+    $selesaiCount = 0;
+    foreach ($branchUsers as $branchUser) {
+        $statusKey = (string)($branchUser['status_key'] ?? '');
+        if ($statusKey === 'belum_vote') {
+            $belumVoteCount++;
+            $pendingUsers[] = $branchUser;
+        } elseif ($statusKey === 'belum_lengkap') {
+            $belumLengkapCount++;
+            $pendingUsers[] = $branchUser;
+        } else {
+            $selesaiCount++;
+        }
+    }
+    $totalUserCabang = count($branchUsers);
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Pantauan Cabang</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+                color: #111827;
+                min-height: 100vh;
+                padding: 24px 16px;
+            }
+            .wrap {
+                width: 100%;
+                max-width: 1080px;
+                margin: 0 auto;
+            }
+            .panel {
+                background: #fff;
+                border: 1px solid #e5e7eb;
+                border-radius: 18px;
+                padding: 28px;
+                box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+            }
+            .topbar {
+                display: flex;
+                gap: 16px;
+                justify-content: space-between;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                margin-bottom: 20px;
+            }
+            .topbar-copy {
+                flex: 1 1 320px;
+                min-width: 0;
+            }
+            h1 {
+                margin: 0 0 10px;
+                font-size: 30px;
+                color: #111827;
+            }
+            p {
+                margin: 0;
+                color: #475569;
+                line-height: 1.6;
+            }
+            .top-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+            .btn-back {
+                display: inline-block;
+                text-decoration: none;
+                background: #111827;
+                color: #fff;
+                padding: 10px 16px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                border: 0;
+            }
+            .btn-back:hover {
+                background: #0f172a;
+            }
+            .btn-back:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .summary-grid {
+                display: grid;
+                gap: 14px;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                margin-bottom: 18px;
+            }
+            .summary-card {
+                background: #f8fafc;
+                border: 1px solid #dbeafe;
+                border-radius: 14px;
+                padding: 16px;
+            }
+            .summary-label {
+                display: block;
+                font-size: 13px;
+                font-weight: 700;
+                color: #2563eb;
+                margin-bottom: 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
+            .summary-value {
+                display: block;
+                font-size: 28px;
+                font-weight: 800;
+                color: #111827;
+                line-height: 1.1;
+            }
+            .summary-note {
+                margin-top: 6px;
+                font-size: 13px;
+                color: #64748b;
+            }
+            .info-box,
+            .empty-box {
+                border-radius: 14px;
+                padding: 14px 16px;
+                margin-bottom: 18px;
+                border: 1px solid #bae6fd;
+                background: #e0f2fe;
+                color: #0c4a6e;
+            }
+            .empty-box {
+                border-color: #86efac;
+                background: #f0fdf4;
+                color: #166534;
+            }
+            .table-wrap {
+                overflow-x: auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 16px;
+                background: #fff;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                min-width: 720px;
+            }
+            th,
+            td {
+                padding: 14px 16px;
+                border-bottom: 1px solid #e5e7eb;
+                text-align: left;
+                vertical-align: top;
+                font-size: 14px;
+            }
+            th {
+                background: #f8fafc;
+                color: #475569;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
+            tr:last-child td {
+                border-bottom: 0;
+            }
+            .status-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 116px;
+                padding: 7px 10px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .status-badge.belum-vote {
+                background: #fee2e2;
+                color: #991b1b;
+            }
+            .status-badge.belum-lengkap {
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .progress-text {
+                font-weight: 700;
+                color: #111827;
+            }
+            .section-title {
+                margin: 0 0 12px;
+                font-size: 20px;
+                color: #111827;
+            }
+            @media (max-width: 900px) {
+                .summary-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+            @media (max-width: 640px) {
+                body {
+                    padding: 14px;
+                }
+                .panel {
+                    padding: 18px;
+                }
+                h1 {
+                    font-size: 24px;
+                }
+                .summary-grid {
+                    grid-template-columns: 1fr;
+                }
+                .top-actions {
+                    width: 100%;
+                    justify-content: flex-start;
+                }
+                .top-actions .btn-back {
+                    width: 100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <section class="panel">
+                <div class="topbar">
+                    <div class="topbar-copy">
+                        <h1>Pantauan Vote Cabang</h1>
+                    </div>
+                    <div class="top-actions">
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                    </div>
+                </div>
+
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <span class="summary-label">User Cabang</span>
+                        <strong class="summary-value"><?= (int)$totalUserCabang ?></strong>
+                        <p class="summary-note">Total user non-admin pada cabang ini.</p>
+                    </div>
+                    <div class="summary-card">
+                        <span class="summary-label">Belum Vote</span>
+                        <strong class="summary-value"><?= (int)$belumVoteCount ?></strong>
+                        <p class="summary-note">Belum mengisi vote sama sekali.</p>
+                    </div>
+                    <div class="summary-card">
+                        <span class="summary-label">Belum Lengkap</span>
+                        <strong class="summary-value"><?= (int)$belumLengkapCount ?></strong>
+                        <p class="summary-note">Sudah mulai vote, tetapi belum selesai.</p>
+                    </div>
+                    <div class="summary-card">
+                        <span class="summary-label">Selesai</span>
+                        <strong class="summary-value"><?= (int)$selesaiCount ?></strong>
+                        <p class="summary-note">Sudah mengisi seluruh <?= (int)$totalBidangCabang ?> bidang cabang ini.</p>
+                    </div>
+                </div>
+
+                <?php if ($pendingUsers === []): ?>
+                    <div class="empty-box">Semua user cabang ini sudah menyelesaikan vote.</div>
+                <?php else: ?>
+                    <h2 class="section-title">User Yang Belum Menyelesaikan Vote</h2>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nama Lengkap</th>
+                                    <th>Username</th>
+                                    <th>Progress Vote</th>
+                                    <th>Sisa Bidang</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($pendingUsers as $pendingUser): ?>
+                                    <?php
+                                    $statusKey = (string)($pendingUser['status_key'] ?? '');
+                                    $statusClass = $statusKey === 'belum_lengkap' ? 'belum-lengkap' : 'belum-vote';
+                                    ?>
+                                    <tr>
+                                        <td><?= h((string)($pendingUser['nama_lengkap'] ?? '-')) ?></td>
+                                        <td><?= h((string)($pendingUser['login_username'] ?? '-')) ?></td>
+                                        <td>
+                                            <span class="progress-text">
+                                                <?= (int)($pendingUser['filled_bidang'] ?? 0) ?>/<?= (int)($pendingUser['total_bidang'] ?? 0) ?>
+                                            </span>
+                                        </td>
+                                        <td><?= (int)($pendingUser['remaining_bidang'] ?? 0) ?></td>
+                                        <td>
+                                            <span class="status-badge <?= h($statusClass) ?>">
+                                                <?= h((string)($pendingUser['status_label'] ?? '-')) ?>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            </section>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
 if ($page === 'dashboard' || $page === 'kandidat') {
     $authUser = current_authenticated_user($usersForLogin);
     if ($authUser === null) {
         clear_auth_session();
         redirect_to_page('login');
     }
-    if ((string)$authUser['role'] !== 'admin') {
+    if (!user_has_role($authUser, 'admin')) {
         redirect_to_page('bidang', ['info' => 'admin-only']);
     }
 
@@ -5446,7 +5954,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     if ($kandidatProcessFilter !== 'all') {
         $kandidatPageParams['kandidat_filter'] = $kandidatProcessFilter;
     }
-    $_SESSION['role'] = 'admin';
+    sync_session_roles($authUser);
     if ($asalCabang === '') {
         $asalCabang = '-';
     }
@@ -5659,7 +6167,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
         if (!is_array($userItem)) {
             continue;
         }
-        if (normalize_role((string)($userItem['role'] ?? 'user')) !== 'pewawancara') {
+        if (!user_has_role($userItem, 'pewawancara')) {
             continue;
         }
 
@@ -6966,12 +7474,11 @@ if ($page === 'wawancara') {
         clear_auth_session();
         redirect_to_page('login');
     }
-    if (!can_access_wawancara_role((string)$authUser['role'])) {
+    if (!can_access_wawancara_user($authUser)) {
         redirect_to_page('bidang', ['info' => 'wawancara-only']);
     }
 
-    $wawancaraRole = normalize_role((string)$authUser['role']);
-    $isPewawancara = $wawancaraRole === 'pewawancara';
+    $isPewawancara = user_has_role($authUser, 'pewawancara') && !user_has_role($authUser, 'admin');
     $wawancaraLoginUsername = normalize_login_username((string)($authUser['login_username'] ?? ''));
     $wawancaraAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
     $wawancaraProcessFilter = normalize_query_choice((string)($_GET['wawancara_filter'] ?? ''), $wawancaraAllowedProcessFilters, 'all');
@@ -6979,7 +7486,7 @@ if ($page === 'wawancara') {
     if ($wawancaraProcessFilter !== 'all') {
         $wawancaraPageParams['wawancara_filter'] = $wawancaraProcessFilter;
     }
-    $_SESSION['role'] = $wawancaraRole;
+    sync_session_roles($authUser);
     $wawancaraCsrfToken = csrf_token();
     $wawancaraSuccessMessage = '';
     $wawancaraErrorMessage = '';
@@ -7171,7 +7678,7 @@ if ($page === 'wawancara') {
         } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
             $wawancaraErrorMessage = 'Data kandidat tidak valid untuk form kesediaan.';
         } elseif (!is_array($uploadedFile)) {
-            $wawancaraErrorMessage = 'File dokumen kesediaan wajib diupload.';
+            $wawancaraErrorMessage = 'Bukti foto pertemuan wajib diupload.';
         } else {
             $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
             $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
@@ -8439,8 +8946,8 @@ if ($page === 'wawancara') {
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="kesediaan_file">Dokumen Kesediaan (PDF/Gambar)</label>
-                        <input class="doc-field-input" type="file" id="kesediaan_file" name="kesediaan_file" accept=".pdf,image/*" required>
+                        <label class="doc-field-label" for="kesediaan_file">Bukti Foto Pertemuan</label>
+                        <input class="doc-field-input" type="file" id="kesediaan_file" name="kesediaan_file" accept="image/*" required>
                     </div>
 
                     <div class="doc-field">
@@ -9446,7 +9953,7 @@ if ($page === 'pemilihan') {
 
     $username = (string)$authUser['username'];
     $asalCabangUser = (string)$authUser['asal_cabang'];
-    $_SESSION['role'] = (string)$authUser['role'];
+    sync_session_roles($authUser);
 
     $bidangList = personalize_bidang_list_for_cabang(load_bidang_data(), $asalCabangUser);
     $bidangTitle = trim((string)($_GET['bidang'] ?? ''));
@@ -9554,6 +10061,7 @@ if ($page === 'pemilihan') {
                 background: #f3f4f6;
                 color: #111827;
                 min-height: 100vh;
+                min-height: 100dvh;
                 display: grid;
                 place-items: center;
                 padding: 20px;
@@ -9600,14 +10108,106 @@ if ($page === 'pemilihan') {
                 color: #111827;
                 font-weight: 600;
             }
+            .kandidat-combobox {
+                position: relative;
+                margin-bottom: 12px;
+            }
             .input-kandidat {
                 width: 100%;
                 border: 1px solid #d1d5db;
                 border-radius: 8px;
                 padding: 10px;
                 font-size: 14px;
-                margin-bottom: 12px;
+                margin-bottom: 0;
                 background: #fff;
+                padding-right: 48px;
+            }
+            .kandidat-toggle {
+                position: absolute;
+                top: 50%;
+                right: 8px;
+                transform: translateY(-50%);
+                width: 34px;
+                height: 34px;
+                border: 0;
+                border-radius: 8px;
+                background: transparent;
+                color: #111827;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .kandidat-toggle:hover {
+                background: #f3f4f6;
+            }
+            .kandidat-toggle:focus-visible {
+                outline: 3px solid #93c5fd;
+                outline-offset: 2px;
+            }
+            .kandidat-toggle[disabled] {
+                cursor: not-allowed;
+                color: #9ca3af;
+            }
+            .kandidat-toggle-icon {
+                display: inline-block;
+                font-size: 12px;
+                line-height: 1;
+                transition: transform 0.18s ease;
+            }
+            .kandidat-combobox.open .kandidat-toggle-icon {
+                transform: rotate(180deg);
+            }
+            .kandidat-dropdown {
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: calc(100% + 8px);
+                z-index: 30;
+                border: 1px solid #d1d5db;
+                border-radius: 10px;
+                background: #fff;
+                box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+                overflow: auto;
+                overscroll-behavior: contain;
+                -webkit-overflow-scrolling: touch;
+                max-height: 240px;
+            }
+            .kandidat-dropdown[hidden] {
+                display: none;
+            }
+            .kandidat-combobox.drop-up .kandidat-dropdown {
+                top: auto;
+                bottom: calc(100% + 8px);
+            }
+            .kandidat-option,
+            .kandidat-empty {
+                width: 100%;
+                padding: 12px 14px;
+                font-size: 14px;
+                line-height: 1.5;
+                text-align: left;
+            }
+            .kandidat-option {
+                border: 0;
+                border-bottom: 1px solid #e5e7eb;
+                background: #fff;
+                color: #111827;
+                cursor: pointer;
+            }
+            .kandidat-option:last-of-type {
+                border-bottom: 0;
+            }
+            .kandidat-option:hover,
+            .kandidat-option.is-active {
+                background: #eff6ff;
+                color: #1d4ed8;
+            }
+            .kandidat-option[hidden] {
+                display: none;
+            }
+            .kandidat-empty {
+                color: #6b7280;
             }
             .btn-submit {
                 width: 100%;
@@ -9767,6 +10367,16 @@ if ($page === 'pemilihan') {
                 font-size: 16px;
                 line-height: 1;
             }
+            @media (max-width: 640px) {
+                body {
+                    display: block;
+                    padding: 14px;
+                }
+                .card {
+                    margin: 0 auto;
+                    padding: 20px 16px;
+                }
+            }
         </style>
     </head>
     <body>
@@ -9780,30 +10390,54 @@ if ($page === 'pemilihan') {
             <form class="form-box" method="post" action="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => (string)$selectedBidang['title']])) ?>">
                 <input type="hidden" name="csrf_token" value="<?= h($pemilihanCsrfToken) ?>">
                 <label for="kandidat_search">Cari & pilih kandidat majelis</label>
-                <input
-                    class="input-kandidat"
-                    id="kandidat_search"
-                    name="kandidat_search"
-                    type="text"
-                    list="kandidat_list"
-                    placeholder="Ketik nama kandidat..."
-                    autocomplete="off"
-                    value="<?= h($selectedKandidatSearch) ?>"
-                    <?= $kandidatList === [] ? 'disabled' : '' ?>
-                    required
-                >
-                <datalist id="kandidat_list">
-                    <?php foreach ($kandidatList as $kandidat): ?>
-                        <?php
-                        $kandidatId = (string)$kandidat['id'];
-                        $optionLabel = kandidat_option_label($kandidat);
-                        ?>
-                        <option
-                            value="<?= h($optionLabel) ?>"
-                            data-id="<?= h($kandidatId) ?>"
-                        ></option>
-                    <?php endforeach; ?>
-                </datalist>
+                <div class="kandidat-combobox" id="kandidat_combobox">
+                    <input
+                        class="input-kandidat"
+                        id="kandidat_search"
+                        name="kandidat_search"
+                        type="text"
+                        placeholder="Ketik nama kandidat..."
+                        autocomplete="off"
+                        inputmode="search"
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-expanded="false"
+                        aria-controls="kandidat_dropdown"
+                        value="<?= h($selectedKandidatSearch) ?>"
+                        <?= $kandidatList === [] ? 'disabled' : '' ?>
+                        required
+                    >
+                    <button
+                        class="kandidat-toggle"
+                        id="kandidat_toggle"
+                        type="button"
+                        aria-label="Tampilkan daftar kandidat"
+                        aria-haspopup="listbox"
+                        aria-controls="kandidat_dropdown"
+                        aria-expanded="false"
+                        <?= $kandidatList === [] ? 'disabled' : '' ?>
+                    >
+                        <span class="kandidat-toggle-icon" aria-hidden="true">&#9662;</span>
+                    </button>
+                    <div class="kandidat-dropdown" id="kandidat_dropdown" role="listbox" hidden>
+                        <?php foreach ($kandidatList as $index => $kandidat): ?>
+                            <?php
+                            $kandidatId = (string)$kandidat['id'];
+                            $optionLabel = kandidat_option_label($kandidat);
+                            ?>
+                            <button
+                                class="kandidat-option"
+                                id="kandidat_option_<?= $index + 1 ?>"
+                                type="button"
+                                role="option"
+                                tabindex="-1"
+                                data-id="<?= h($kandidatId) ?>"
+                                data-label="<?= h($optionLabel) ?>"
+                            ><?= h($optionLabel) ?></button>
+                        <?php endforeach; ?>
+                        <div class="kandidat-empty" id="kandidat_empty" hidden>Tidak ada kandidat yang cocok.</div>
+                    </div>
+                </div>
                 <input type="hidden" id="kandidat_id" name="kandidat_id" value="<?= h($selectedKandidatId) ?>">
 
                 <button class="btn-submit" type="submit" <?= $kandidatList === [] ? 'disabled' : '' ?>>Simpan Pemilihan</button>
@@ -9839,32 +10473,138 @@ if ($page === 'pemilihan') {
             (function () {
                 const kandidatInput = document.getElementById('kandidat_search');
                 const kandidatIdInput = document.getElementById('kandidat_id');
-                const kandidatList = document.getElementById('kandidat_list');
+                const kandidatCombobox = document.getElementById('kandidat_combobox');
+                const kandidatDropdown = document.getElementById('kandidat_dropdown');
+                const kandidatToggle = document.getElementById('kandidat_toggle');
+                const kandidatEmpty = document.getElementById('kandidat_empty');
                 const form = document.querySelector('.form-box');
                 const confirmModal = document.getElementById('confirm-modal');
                 const confirmSelected = document.getElementById('confirm-selected');
                 const confirmCancel = document.getElementById('confirm-cancel');
                 const confirmOk = document.getElementById('confirm-ok');
-                if (!kandidatInput || !kandidatIdInput || !kandidatList || !form || !confirmModal || !confirmSelected || !confirmCancel || !confirmOk) {
+                if (!kandidatInput || !kandidatIdInput || !kandidatCombobox || !kandidatDropdown || !kandidatToggle || !kandidatEmpty || !form || !confirmModal || !confirmSelected || !confirmCancel || !confirmOk) {
                     return;
                 }
 
                 const optionMap = new Map();
+                const optionItems = Array.from(kandidatDropdown.querySelectorAll('.kandidat-option')).map(function (button) {
+                    const label = (button.dataset.label || button.textContent || '').trim();
+                    const id = (button.dataset.id || '').trim();
+                    const labelKey = label.toLowerCase();
+                    if (labelKey !== '' && id !== '') {
+                        optionMap.set(labelKey, id);
+                    }
+                    return {
+                        button: button,
+                        label: label,
+                        labelKey: labelKey,
+                        id: id,
+                    };
+                });
+                const optionItemMap = new Map(optionItems.map(function (item) {
+                    return [item.button, item];
+                }));
                 let submitConfirmed = false;
                 let previousFocus = null;
-                for (const option of kandidatList.options) {
-                    const value = (option.value || '').trim().toLowerCase();
-                    const id = (option.dataset.id || '').trim();
-                    if (value !== '' && id !== '') {
-                        optionMap.set(value, id);
-                    }
-                }
+                let filteredItems = optionItems.slice();
+                let activeIndex = -1;
 
                 function syncSelectedKandidat() {
                     const key = kandidatInput.value.trim().toLowerCase();
                     const matchedId = optionMap.get(key) || '';
                     kandidatIdInput.value = matchedId;
                     kandidatInput.setCustomValidity('');
+                }
+
+                function setComboboxExpanded(isExpanded) {
+                    kandidatCombobox.classList.toggle('open', isExpanded);
+                    kandidatInput.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                    kandidatToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                    kandidatDropdown.hidden = !isExpanded;
+                    if (!isExpanded) {
+                        kandidatCombobox.classList.remove('drop-up');
+                        kandidatDropdown.style.maxHeight = '';
+                        kandidatInput.removeAttribute('aria-activedescendant');
+                    }
+                }
+
+                function clearActiveOption() {
+                    activeIndex = -1;
+                    kandidatInput.removeAttribute('aria-activedescendant');
+                    optionItems.forEach(function (item) {
+                        item.button.classList.remove('is-active');
+                        item.button.setAttribute('aria-selected', 'false');
+                    });
+                }
+
+                function updateActiveOption(nextIndex) {
+                    clearActiveOption();
+                    if (nextIndex < 0 || nextIndex >= filteredItems.length) {
+                        return;
+                    }
+                    activeIndex = nextIndex;
+                    const activeItem = filteredItems[activeIndex];
+                    activeItem.button.classList.add('is-active');
+                    activeItem.button.setAttribute('aria-selected', 'true');
+                    kandidatInput.setAttribute('aria-activedescendant', activeItem.button.id);
+                    activeItem.button.scrollIntoView({ block: 'nearest' });
+                }
+
+                function updateDropdownLayout() {
+                    if (kandidatDropdown.hidden) {
+                        return;
+                    }
+                    const viewport = window.visualViewport;
+                    const inputRect = kandidatInput.getBoundingClientRect();
+                    const viewportTop = viewport ? viewport.offsetTop : 0;
+                    const viewportBottom = viewport ? (viewport.offsetTop + viewport.height) : window.innerHeight;
+                    const rawSpaceBelow = viewportBottom - inputRect.bottom - 12;
+                    const rawSpaceAbove = inputRect.top - viewportTop - 12;
+                    const openUp = rawSpaceBelow < 180 && rawSpaceAbove > rawSpaceBelow;
+                    const availableSpace = openUp ? rawSpaceAbove : rawSpaceBelow;
+                    kandidatCombobox.classList.toggle('drop-up', openUp);
+                    kandidatDropdown.style.maxHeight = Math.max(96, Math.min(280, Math.floor(availableSpace))) + 'px';
+                }
+
+                function filterOptions() {
+                    const query = kandidatInput.value.trim().toLowerCase();
+                    filteredItems = [];
+                    optionItems.forEach(function (item) {
+                        const matches = query === '' || item.labelKey.indexOf(query) !== -1;
+                        item.button.hidden = !matches;
+                        item.button.classList.remove('is-active');
+                        item.button.setAttribute('aria-selected', 'false');
+                        if (matches) {
+                            filteredItems.push(item);
+                        }
+                    });
+                    kandidatEmpty.hidden = filteredItems.length !== 0;
+                    kandidatDropdown.scrollTop = 0;
+                    clearActiveOption();
+                }
+
+                function openDropdown() {
+                    if (optionItems.length === 0) {
+                        return;
+                    }
+                    filterOptions();
+                    setComboboxExpanded(true);
+                    updateDropdownLayout();
+                }
+
+                function closeDropdown() {
+                    setComboboxExpanded(false);
+                    clearActiveOption();
+                }
+
+                function selectKandidat(item) {
+                    if (!item) {
+                        return;
+                    }
+                    kandidatInput.value = item.label;
+                    kandidatIdInput.value = item.id;
+                    kandidatInput.setCustomValidity('');
+                    closeDropdown();
                 }
 
                 function openConfirmModal(kandidatTerpilih) {
@@ -9883,8 +10623,81 @@ if ($page === 'pemilihan') {
                     }
                 }
 
-                kandidatInput.addEventListener('input', syncSelectedKandidat);
+                kandidatInput.addEventListener('focus', function () {
+                    openDropdown();
+                    if (window.matchMedia('(max-width: 640px)').matches) {
+                        window.setTimeout(function () {
+                            kandidatInput.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                            updateDropdownLayout();
+                        }, 120);
+                    }
+                });
+
+                kandidatInput.addEventListener('click', openDropdown);
+
+                kandidatInput.addEventListener('input', function () {
+                    submitConfirmed = false;
+                    syncSelectedKandidat();
+                    openDropdown();
+                });
+
                 kandidatInput.addEventListener('change', syncSelectedKandidat);
+
+                kandidatInput.addEventListener('keydown', function (event) {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        if (kandidatDropdown.hidden) {
+                            openDropdown();
+                        }
+                        if (filteredItems.length === 0) {
+                            return;
+                        }
+                        event.preventDefault();
+                        let nextIndex = activeIndex;
+                        if (event.key === 'ArrowDown') {
+                            nextIndex = activeIndex < 0 ? 0 : activeIndex + 1;
+                            if (nextIndex >= filteredItems.length) {
+                                nextIndex = 0;
+                            }
+                        } else {
+                            nextIndex = activeIndex < 0 ? filteredItems.length - 1 : activeIndex - 1;
+                            if (nextIndex < 0) {
+                                nextIndex = filteredItems.length - 1;
+                            }
+                        }
+                        updateActiveOption(nextIndex);
+                        return;
+                    }
+                    if (event.key === 'Enter' && !kandidatDropdown.hidden && activeIndex >= 0) {
+                        event.preventDefault();
+                        selectKandidat(filteredItems[activeIndex]);
+                        return;
+                    }
+                    if (event.key === 'Escape' && !kandidatDropdown.hidden) {
+                        event.preventDefault();
+                        closeDropdown();
+                    }
+                });
+
+                kandidatToggle.addEventListener('click', function () {
+                    if (kandidatDropdown.hidden) {
+                        openDropdown();
+                        kandidatInput.focus();
+                    } else {
+                        closeDropdown();
+                    }
+                });
+
+                kandidatDropdown.addEventListener('mousedown', function (event) {
+                    event.preventDefault();
+                });
+
+                kandidatDropdown.addEventListener('click', function (event) {
+                    const optionButton = event.target.closest('.kandidat-option');
+                    if (!optionButton) {
+                        return;
+                    }
+                    selectKandidat(optionItemMap.get(optionButton) || null);
+                });
 
                 form.addEventListener('submit', function (event) {
                     syncSelectedKandidat();
@@ -9900,6 +10713,18 @@ if ($page === 'pemilihan') {
                         const kandidatTerpilih = kandidatInput.value.trim();
                         const kandidatNama = kandidatTerpilih.split(' - ')[0].trim();
                         openConfirmModal(kandidatNama || kandidatTerpilih);
+                    }
+                });
+
+                document.addEventListener('click', function (event) {
+                    if (!kandidatCombobox.contains(event.target)) {
+                        closeDropdown();
+                    }
+                });
+
+                document.addEventListener('focusin', function (event) {
+                    if (!kandidatCombobox.contains(event.target)) {
+                        closeDropdown();
                     }
                 });
 
@@ -9924,10 +10749,23 @@ if ($page === 'pemilihan') {
                 });
 
                 document.addEventListener('keydown', function (event) {
+                    if (event.key === 'Escape' && !kandidatDropdown.hidden) {
+                        closeDropdown();
+                    }
                     if (event.key === 'Escape' && !confirmModal.hidden) {
                         closeConfirmModal();
                     }
                 });
+
+                window.addEventListener('resize', updateDropdownLayout);
+                window.addEventListener('scroll', updateDropdownLayout, true);
+                if (window.visualViewport) {
+                    window.visualViewport.addEventListener('resize', updateDropdownLayout);
+                    window.visualViewport.addEventListener('scroll', updateDropdownLayout);
+                }
+
+                syncSelectedKandidat();
+                filterOptions();
             })();
         </script>
     </body>
