@@ -342,6 +342,25 @@ function h(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function display_name_text(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (function_exists('mb_strtoupper')) {
+        return mb_strtoupper($value, 'UTF-8');
+    }
+
+    return strtoupper($value);
+}
+
+function h_name(string $value): string
+{
+    return h(display_name_text($value));
+}
+
 function election_deadline_timestamp(): int
 {
     $ts = strtotime(ELECTION_DEADLINE_END);
@@ -2582,7 +2601,7 @@ function kandidat_option_label(array $kandidat): string
 {
     $nama = trim((string)($kandidat['nama_lengkap'] ?? ''));
     $cabang = trim((string)($kandidat['asal_cabang'] ?? ''));
-    return $nama . ' - ' . $cabang;
+    return display_name_text($nama) . ' - ' . $cabang;
 }
 
 function find_kandidat_by_option_label(array $kandidatList, string $label): ?array
@@ -5154,7 +5173,8 @@ if ($page === 'bidang') {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Halaman Pemilihan</title>
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
         <style>
             * { box-sizing: border-box; }
             body {
@@ -5439,7 +5459,7 @@ if ($page === 'bidang') {
             <div class="topbar">
                 <div class="topbar-copy">
                     <h1>Halaman Pemilihan</h1>
-                    <p>Pilih bidang yang diinginkan. Login sebagai <strong><?= h($username) ?></strong> (<?= h($asalCabang) ?>).</p>
+                    <p>Pilih bidang yang diinginkan. Login sebagai <strong><?= h_name($username) ?></strong> (<?= h($asalCabang) ?>).</p>
                 </div>
                 <div class="top-actions">
                     <?php if ($isAdmin): ?>
@@ -5490,7 +5510,7 @@ if ($page === 'bidang') {
                         <?php endif; ?>
                         <p class="picked-candidate<?= $isVoted ? '' : ' empty' ?>">
                             <span class="picked-label">Kandidat terpilih:</span>
-                            <span class="picked-name"><?= h($pickedName) ?></span>
+                            <span class="picked-name"><?= h($isVoted ? display_name_text($pickedName) : $pickedName) ?></span>
                         </p>
                         <?php if ($isVoted): ?>
                             <button class="btn-pilih voted" type="button" disabled>Sudah Vote</button>
@@ -5650,7 +5670,8 @@ if ($page === 'gembala_lokal') {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Pantauan Cabang</title>
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
         <style>
             * { box-sizing: border-box; }
             body {
@@ -5907,7 +5928,7 @@ if ($page === 'gembala_lokal') {
                                     $statusClass = $statusKey === 'belum_lengkap' ? 'belum-lengkap' : 'belum-vote';
                                     ?>
                                     <tr>
-                                        <td><?= h((string)($pendingUser['nama_lengkap'] ?? '-')) ?></td>
+                                        <td><?= h_name((string)($pendingUser['nama_lengkap'] ?? '-')) ?></td>
                                         <td><?= h((string)($pendingUser['login_username'] ?? '-')) ?></td>
                                         <td>
                                             <span class="progress-text">
@@ -6376,7 +6397,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title><?= h($isDashboardPage ? 'Dashboard Rekap' : 'Halaman Kandidat') ?></title>
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
         <style>
             * { box-sizing: border-box; }
             body {
@@ -7141,7 +7163,10 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         $assignedInterviewerLabel = '';
                                         if ($assignedInterviewerLogin !== '' && isset($interviewerMapByLogin[$assignedInterviewerLogin])) {
                                             $assignedInfo = (array)$interviewerMapByLogin[$assignedInterviewerLogin];
-                                            $assignedInterviewerLabel = (string)($assignedInfo['nama_lengkap'] ?? $assignedInterviewerLogin);
+                                            $assignedInterviewerName = trim((string)($assignedInfo['nama_lengkap'] ?? ''));
+                                            $assignedInterviewerLabel = $assignedInterviewerName !== ''
+                                                ? display_name_text($assignedInterviewerName)
+                                                : $assignedInterviewerLogin;
                                             $assignedInterviewerCabang = trim((string)($assignedInfo['asal_cabang'] ?? ''));
                                             if ($assignedInterviewerCabang !== '') {
                                                 $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
@@ -7150,7 +7175,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                             $assignedInterviewerName = normalize_username((string)($candidateAssignment['interviewer_nama_lengkap'] ?? ''));
                                             $assignedInterviewerCabang = trim((string)($candidateAssignment['interviewer_asal_cabang'] ?? ''));
                                             if ($assignedInterviewerName !== '') {
-                                                $assignedInterviewerLabel = $assignedInterviewerName;
+                                                $assignedInterviewerLabel = display_name_text($assignedInterviewerName);
                                                 if ($assignedInterviewerCabang !== '') {
                                                     $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
                                                 }
@@ -7220,7 +7245,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         >
                                             <div class="candidate-main">
                                                 #<?= h((string)($index + 1)) ?> -
-                                                <?= h($candidateNama) ?>
+                                                <?= h_name($candidateNama) ?>
                                                 (<?= h($candidateCabang) ?>)
                                                 - <?= h((string)$candidateCount) ?> suara
                                             </div>
@@ -7275,7 +7300,10 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                         <?php foreach ($interviewerUsers as $interviewerItem): ?>
                                                             <?php
                                                             $interviewerLogin = (string)($interviewerItem['login_username'] ?? '');
-                                                            $interviewerLabel = (string)($interviewerItem['nama_lengkap'] ?? $interviewerLogin);
+                                                            $interviewerName = trim((string)($interviewerItem['nama_lengkap'] ?? ''));
+                                                            $interviewerLabel = $interviewerName !== ''
+                                                                ? display_name_text($interviewerName)
+                                                                : $interviewerLogin;
                                                             $interviewerCabang = trim((string)($interviewerItem['asal_cabang'] ?? ''));
                                                             if ($interviewerCabang !== '') {
                                                                 $interviewerLabel .= ' (' . $interviewerCabang . ')';
@@ -7367,10 +7395,10 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         <tr>
                                             <td><?= h((string)($idx + 1)) ?></td>
                                             <td class="mono"><?= h((string)($log['timestamp'] ?? '-')) ?></td>
-                                            <td><?= h((string)($log['username'] ?? '-')) ?></td>
+                                            <td><?= h_name((string)($log['username'] ?? '-')) ?></td>
                                             <td><?= h((string)($log['asal_cabang_user'] ?? '-')) ?></td>
                                             <td><?= h((string)($log['bidang'] ?? '-')) ?></td>
-                                            <td><?= h((string)($log['kandidat_nama'] ?? '-')) ?></td>
+                                            <td><?= h_name((string)($log['kandidat_nama'] ?? '-')) ?></td>
                                             <td><?= h((string)($log['kandidat_cabang'] ?? '-')) ?></td>
                                             <td class="mono"><?= h((string)($log['ip_address'] ?? '-')) ?></td>
                                             <td><?= h((string)($log['event'] ?? '-')) ?></td>
@@ -7840,7 +7868,8 @@ if ($page === 'wawancara') {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Wawancara</title>
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
         <style>
             * { box-sizing: border-box; }
             body {
@@ -8262,6 +8291,9 @@ if ($page === 'wawancara') {
                 line-height: 1.5;
                 resize: vertical;
                 font-family: inherit;
+            }
+            .name-display-uppercase {
+                text-transform: uppercase;
             }
             .doc-check-group {
                 display: flex;
@@ -8809,7 +8841,7 @@ if ($page === 'wawancara') {
                                             >
                                                 <div class="candidate-main">
                                                     #<?= h((string)($index + 1)) ?> -
-                                                    <?= h($wawancaraCandidateName) ?>
+                                                    <?= h_name($wawancaraCandidateName) ?>
                                                     (<?= h($wawancaraCandidateCabang) ?>)
                                                     - <?= h((string)$wawancaraCandidateCount) ?> suara
                                                 </div>
@@ -8934,7 +8966,7 @@ if ($page === 'wawancara') {
                     <div class="doc-field">
                         <label class="doc-field-label" for="nama_pihak">Nama Lengkap Pihak</label>
                         <input
-                            class="doc-field-input"
+                            class="doc-field-input name-display-uppercase"
                             type="text"
                             id="nama_pihak"
                             name="nama_pihak"
@@ -9132,6 +9164,16 @@ if ($page === 'wawancara') {
             let activeScoreCardTemplate = null;
             let activeScoreCardReadOnly = false;
 
+            function displayNameText(value) {
+                const raw = String(value || '').trim();
+                if (raw === '') {
+                    return '';
+                }
+                return typeof raw.toLocaleUpperCase === 'function'
+                    ? raw.toLocaleUpperCase('id-ID')
+                    : raw.toUpperCase();
+            }
+
             function buildWawancaraFilterUrl(selectedFilter) {
                 const url = new URL(window.location.href);
                 url.searchParams.set('page', 'wawancara');
@@ -9243,7 +9285,7 @@ if ($page === 'wawancara') {
                 const candidateBidang = (buttonElement.dataset.candidateBidang || '').trim();
                 const candidateName = (buttonElement.dataset.candidateName || '').trim();
                 const candidateCabang = (buttonElement.dataset.candidateCabang || '').trim();
-                const displayName = candidateName !== '' ? candidateName : '-';
+                const displayName = candidateName !== '' ? displayNameText(candidateName) : '-';
 
                 candidateDocForm.reset();
                 candidateDocBidang.value = candidateBidang;
@@ -9288,7 +9330,7 @@ if ($page === 'wawancara') {
                 }
 
                 const hasForm = formItems.length > 0;
-                candidateViewName.textContent = candidateName !== '' ? candidateName : '-';
+                candidateViewName.textContent = candidateName !== '' ? displayNameText(candidateName) : '-';
 
                 if (!hasForm) {
                     candidateViewRecapBody.innerHTML = '';
@@ -9298,7 +9340,7 @@ if ($page === 'wawancara') {
                     const recapRows = [];
                     formItems.forEach(function (item, idx) {
                         const recapHubungan = (item && item.hubungan ? String(item.hubungan) : '-');
-                        const recapNamaPihak = (item && item.nama_pihak ? String(item.nama_pihak) : '-');
+                        const recapNamaPihak = (item && item.nama_pihak ? displayNameText(item.nama_pihak) : '-');
                         const recapStatus = (item && item.status ? String(item.status) : '-');
                         const recapAlasan = (item && item.alasan ? String(item.alasan) : '-');
                         const recapFileName = (item && item.file ? String(item.file) : '-');
@@ -9721,7 +9763,7 @@ if ($page === 'wawancara') {
                     candidateScoreCardCabangInput.value = candidateCabang;
                 }
                 if (candidateScoreCardName) {
-                    candidateScoreCardName.textContent = candidateName !== '' ? candidateName : '-';
+                    candidateScoreCardName.textContent = candidateName !== '' ? displayNameText(candidateName) : '-';
                 }
                 if (candidateScoreCardBidangName) {
                     candidateScoreCardBidangName.textContent = candidateBidang !== '' ? candidateBidang : '-';
@@ -10052,7 +10094,8 @@ if ($page === 'pemilihan') {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Pemilihan</title>
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
         <style>
             * { box-sizing: border-box; }
             body {
@@ -10121,6 +10164,9 @@ if ($page === 'pemilihan') {
                 margin-bottom: 0;
                 background: #fff;
                 padding-right: 48px;
+            }
+            .name-display-uppercase {
+                text-transform: uppercase;
             }
             .kandidat-toggle {
                 position: absolute;
@@ -10392,7 +10438,7 @@ if ($page === 'pemilihan') {
                 <label for="kandidat_search">Cari & pilih kandidat majelis</label>
                 <div class="kandidat-combobox" id="kandidat_combobox">
                     <input
-                        class="input-kandidat"
+                        class="input-kandidat name-display-uppercase"
                         id="kandidat_search"
                         name="kandidat_search"
                         type="text"
@@ -10509,6 +10555,16 @@ if ($page === 'pemilihan') {
                 let filteredItems = optionItems.slice();
                 let activeIndex = -1;
 
+                function displayNameText(value) {
+                    const raw = String(value || '').trim();
+                    if (raw === '') {
+                        return '';
+                    }
+                    return typeof raw.toLocaleUpperCase === 'function'
+                        ? raw.toLocaleUpperCase('id-ID')
+                        : raw.toUpperCase();
+                }
+
                 function syncSelectedKandidat() {
                     const key = kandidatInput.value.trim().toLowerCase();
                     const matchedId = optionMap.get(key) || '';
@@ -10609,7 +10665,7 @@ if ($page === 'pemilihan') {
 
                 function openConfirmModal(kandidatTerpilih) {
                     previousFocus = document.activeElement;
-                    confirmSelected.textContent = kandidatTerpilih;
+                    confirmSelected.textContent = displayNameText(kandidatTerpilih);
                     confirmModal.hidden = false;
                     document.body.classList.add('modal-open');
                     confirmOk.focus();
@@ -10785,7 +10841,8 @@ if ($page !== 'login') {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login</title>
+    <title>PeMa REC Indonesia</title>
+    <link rel="icon" type="image/png" href="logo.png">
     <style>
         * { box-sizing: border-box; }
         body {
