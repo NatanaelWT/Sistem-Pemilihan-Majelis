@@ -9462,11 +9462,6 @@ if ($page === 'wawancara') {
                         </div>
                     </div>
 
-                    <div class="scorecard-ranges">
-                        <p class="scorecard-range-title">Kriteria Total Score Akhir</p>
-                        <ul class="scorecard-range-list" id="candidateScoreCardRangeList"></ul>
-                    </div>
-
                     <div id="candidateScoreCardSections" class="scorecard-section-list"></div>
 
                     <div class="scorecard-final-grid">
@@ -9486,6 +9481,11 @@ if ($page === 'wawancara') {
                             <span class="scorecard-final-label">Terakhir Disimpan</span>
                             <strong class="scorecard-final-value" id="candidateScoreCardUpdatedAt">Belum pernah disimpan</strong>
                         </div>
+                    </div>
+
+                    <div class="scorecard-ranges">
+                        <p class="scorecard-range-title">Kriteria Total Score Akhir</p>
+                        <ul class="scorecard-range-list" id="candidateScoreCardRangeList"></ul>
                     </div>
 
                     <div class="doc-field">
