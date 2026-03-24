@@ -342,6 +342,202 @@ function h(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function render_language_switcher_head(): void
+{
+    ?>
+    <style>
+        .language-switcher {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 120;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px;
+            border-radius: 999px;
+            background: rgba(17, 24, 39, 0.92);
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.24);
+            backdrop-filter: blur(10px);
+        }
+        .language-switcher-btn {
+            border: 0;
+            min-width: 54px;
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.78);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+        }
+        .language-switcher-btn:hover {
+            color: #fff;
+            transform: translateY(-1px);
+        }
+        .language-switcher-btn.is-active {
+            background: #fff;
+            color: #111827;
+        }
+        .language-switcher-btn:focus-visible {
+            outline: 3px solid #93c5fd;
+            outline-offset: 2px;
+        }
+        @media (max-width: 640px) {
+            .language-switcher {
+                right: 14px;
+                bottom: 14px;
+            }
+            .language-switcher-btn {
+                min-width: 50px;
+                padding: 9px 12px;
+            }
+        }
+    </style>
+    <?php
+}
+
+function render_language_switcher(): void
+{
+    ?>
+    <div class="language-switcher" aria-label="Pengganti bahasa">
+        <button class="language-switcher-btn" type="button" data-language-option="id">ID</button>
+        <button class="language-switcher-btn" type="button" data-language-option="en">EN</button>
+    </div>
+    <?php
+}
+
+function render_language_script(array $translations): void
+{
+    $payload = json_encode($translations, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($payload) || $payload === '') {
+        $payload = '{}';
+    }
+    ?>
+    <script>
+        (function () {
+            const STORAGE_KEY = 'majelis_language';
+            const DEFAULT_LANG = 'id';
+            const translations = <?= $payload ?>;
+            const languageButtons = Array.from(document.querySelectorAll('[data-language-option]'));
+
+            function normalizeLanguage(value) {
+                return value === 'en' ? 'en' : 'id';
+            }
+
+            function readStoredLanguage() {
+                try {
+                    return normalizeLanguage(localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG);
+                } catch (error) {
+                    return DEFAULT_LANG;
+                }
+            }
+
+            function writeStoredLanguage(value) {
+                try {
+                    localStorage.setItem(STORAGE_KEY, normalizeLanguage(value));
+                } catch (error) {
+                    // Ignore storage failures.
+                }
+            }
+
+            function readVars(element) {
+                const raw = String(element.getAttribute('data-i18n-vars') || '').trim();
+                if (raw === '') {
+                    return {};
+                }
+                try {
+                    const parsed = JSON.parse(raw);
+                    return parsed && typeof parsed === 'object' ? parsed : {};
+                } catch (error) {
+                    return {};
+                }
+            }
+
+            function interpolate(template, vars) {
+                return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, function (_, key) {
+                    return Object.prototype.hasOwnProperty.call(vars, key) ? String(vars[key]) : '';
+                });
+            }
+
+            function translate(key, lang, vars, fallback) {
+                const entry = key && Object.prototype.hasOwnProperty.call(translations, key) ? translations[key] : null;
+                const source = entry && typeof entry === 'object' ? (entry[lang] || entry.id || entry.en || fallback || '') : (fallback || '');
+                return interpolate(source, vars || {});
+            }
+
+            function applyLanguage(lang) {
+                const nextLang = normalizeLanguage(lang);
+                document.documentElement.lang = nextLang;
+                document.querySelectorAll('[data-i18n]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n');
+                    const fallback = element.getAttribute('data-i18n-fallback') || element.textContent || '';
+                    element.textContent = translate(key, nextLang, readVars(element), fallback);
+                });
+                document.querySelectorAll('[data-i18n-html]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n-html');
+                    const fallback = element.getAttribute('data-i18n-fallback') || element.innerHTML || '';
+                    element.innerHTML = translate(key, nextLang, readVars(element), fallback);
+                });
+                document.querySelectorAll('[data-i18n-placeholder]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n-placeholder');
+                    const fallback = element.getAttribute('placeholder') || '';
+                    element.setAttribute('placeholder', translate(key, nextLang, readVars(element), fallback));
+                });
+                document.querySelectorAll('[data-i18n-aria-label]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n-aria-label');
+                    const fallback = element.getAttribute('aria-label') || '';
+                    element.setAttribute('aria-label', translate(key, nextLang, readVars(element), fallback));
+                });
+                document.querySelectorAll('[data-i18n-value]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n-value');
+                    const fallback = element.value || '';
+                    element.value = translate(key, nextLang, readVars(element), fallback);
+                });
+                document.querySelectorAll('[data-lang-text-id][data-lang-text-en]').forEach(function (element) {
+                    const value = nextLang === 'en'
+                        ? (element.getAttribute('data-lang-text-en') || '')
+                        : (element.getAttribute('data-lang-text-id') || '');
+                    element.textContent = value;
+                });
+                document.querySelectorAll('[data-lang-html-id][data-lang-html-en]').forEach(function (element) {
+                    const value = nextLang === 'en'
+                        ? (element.getAttribute('data-lang-html-en') || '')
+                        : (element.getAttribute('data-lang-html-id') || '');
+                    element.innerHTML = value;
+                });
+                languageButtons.forEach(function (button) {
+                    const buttonLang = normalizeLanguage(button.getAttribute('data-language-option') || '');
+                    button.classList.toggle('is-active', buttonLang === nextLang);
+                    button.setAttribute('aria-pressed', buttonLang === nextLang ? 'true' : 'false');
+                });
+                window.majelisLang = {
+                    current: nextLang,
+                    t: function (key, vars, fallback) {
+                        return translate(key, nextLang, vars || {}, fallback || '');
+                    }
+                };
+                document.dispatchEvent(new CustomEvent('majelis:languagechange', {
+                    detail: { lang: nextLang }
+                }));
+            }
+
+            languageButtons.forEach(function (button) {
+                button.addEventListener('click', function () {
+                    const nextLang = normalizeLanguage(button.getAttribute('data-language-option') || DEFAULT_LANG);
+                    writeStoredLanguage(nextLang);
+                    applyLanguage(nextLang);
+                });
+            });
+
+            applyLanguage(readStoredLanguage());
+        })();
+    </script>
+    <?php
+}
+
 function display_name_text(string $value): string
 {
     $value = trim($value);
@@ -909,7 +1105,130 @@ function get_user_cabang_list(array $users): array
 
 function default_bidang_description(string $title): string
 {
-    return 'Template deskripsi sementara untuk ' . $title . '. Silakan ubah isi deskripsi sesuai kebutuhan.';
+    return bidang_default_description_text($title, 'id');
+}
+
+function bidang_base_title_translations(): array
+{
+    return [
+        'Ketua Majelis' => ['id' => 'Ketua Majelis', 'en' => 'Assembly Chair'],
+        'Sekretaris Majelis' => ['id' => 'Sekretaris Majelis', 'en' => 'Assembly Secretary'],
+        'Bendahara Majelis' => ['id' => 'Bendahara Majelis', 'en' => 'Assembly Treasurer'],
+        'Majelis Bidang Pemuridan' => ['id' => 'Majelis Bidang Pemuridan', 'en' => 'Discipleship Assembly'],
+        'Majelis Bidang Misi' => ['id' => 'Majelis Bidang Misi', 'en' => 'Mission Assembly'],
+        'Majelis Bidang Diakonia' => ['id' => 'Majelis Bidang Diakonia', 'en' => 'Diaconal Assembly'],
+        'Majelis Bidang Ibadah' => ['id' => 'Majelis Bidang Ibadah', 'en' => 'Worship Assembly'],
+        'Ketua Pengurus Lokal' => ['id' => 'Ketua Pengurus Lokal', 'en' => 'Local Branch Chair'],
+    ];
+}
+
+function bidang_default_description_map(): array
+{
+    return [
+        'Ketua Majelis' => [
+            'id' => 'Bertanggung jawab untuk memimpin, memfasilitasi, dan mengoordinasikan fungsi Majelis Jemaat (Penatua dan Diaken) agar berjalan sesuai dengan tata gereja dan visi misi gereja. Ketua Majelis memastikan bahwa seluruh keputusan dan arah gereja tetap setia pada doktrin Reformed, berpusat pada Injil (Gospel-Centered), dan dilaksanakan dengan tata kelola yang rapi dan transparan.',
+            'en' => 'Responsible for leading, facilitating, and coordinating the functions of the Church Assembly (Elders and Deacons) so that they operate in accordance with church order and the church\'s vision and mission. The Assembly Chair ensures that every decision and direction of the church remains faithful to Reformed doctrine, centered on the Gospel (Gospel-Centered), and carried out with orderly and transparent governance.',
+        ],
+        'Sekretaris Majelis' => [
+            'id' => 'Bertanggung jawab mengelola seluruh administrasi, dokumentasi, korespondensi, dan arsip gerejawi. Sekretaris memastikan bahwa sejarah gereja tercatat rapi, keputusan majelis terdokumentasi akurat, dan operasional organisasi berjalan sesuai dengan Tata Gereja yang berlaku.',
+            'en' => 'Responsible for managing all administration, documentation, correspondence, and church archives. The Secretary ensures that the history of the church is recorded properly, assembly decisions are documented accurately, and organizational operations run in accordance with the applicable Church Order.',
+        ],
+        'Bendahara Majelis' => [
+            'id' => 'Bertanggung jawab mengelola keuangan gereja dengan integritas mutlak, transparansi, dan prinsip penatalayanan Alkitabiah. Bendahara memastikan bahwa setiap sen uang persembahan jemaat dikelola secara bijaksana, dicatat dengan akurat, dan disalurkan untuk mendukung pekerjaan pemberitaan Injil dan pelayanan kasih.',
+            'en' => 'Responsible for managing church finances with absolute integrity, transparency, and the principles of Biblical stewardship. The Treasurer ensures that every cent of the congregation\'s offerings is managed wisely, recorded accurately, and allocated to support the work of proclaiming the Gospel and ministries of mercy.',
+        ],
+        'Majelis Bidang Pemuridan' => [
+            'id' => 'Merancang dan mengevaluasi strategi jalur pertumbuhan jemaat yang sistematis mulai dari pengunjung baru hingga menjadi pemurid yang mampu melatih orang lain, dengan memastikan seluruh materi pendidikan, kurikulum, dan proses pendampingan berakar kuat pada doktrin Reformed, berpusat pada Injil, serta membekali jemaat dengan wawasan dunia Kristen yang utuh.',
+            'en' => 'Designs and evaluates a systematic congregational growth pathway strategy, from new visitors to becoming disciples who are able to train others, while ensuring that all educational materials, curriculum, and mentoring processes are firmly rooted in Reformed doctrine, centered on the Gospel, and equip the congregation with a comprehensive Christian worldview.',
+        ],
+        'Majelis Bidang Misi' => [
+            'id' => 'Bertanggung jawab merumuskan strategi, mengelola, dan mengawasi pelaksanaan Amanat Agung (Matius 28:19-20) di tingkat lokal (Penginjilan) dan lintas budaya (Misi/Zending). Ketua Bidang Misi memastikan gereja tidak menjadi "klub rohani" yang tertutup, melainkan komunitas yang bergerak keluar untuk memberitakan Injil Kerajaan Allah, baik melalui perkataan maupun perbuatan.',
+            'en' => 'Responsible for formulating strategy, managing, and overseeing the implementation of the Great Commission (Matthew 28:19-20) at the local level (Evangelism) and across cultures (Mission/Zending). The Head of the Mission Assembly ensures that the church does not become a closed "spiritual club," but rather a community that moves outward to proclaim the Gospel of the Kingdom of God, both through word and deed.',
+        ],
+        'Majelis Bidang Diakonia' => [
+            'id' => 'Bertanggung jawab mengelola pelayanan kasih dan bantuan sosial gereja. Ketua Bidang Diakonia memimpin para diaken untuk mendeteksi, memverifikasi, dan merespons kebutuhan jemaat (janda, yatim piatu, orang sakit, yang kekurangan ekonomi) dengan bijaksana, serta memastikan fasilitas fisik gereja siap mendukung ibadah sebagai wujud pelayanan yang nyata.',
+            'en' => 'Responsible for managing the church\'s mercy ministry and social assistance. The Head of the Diaconal Assembly leads the deacons to detect, verify, and respond wisely to the needs of the congregation (widows, orphans, the sick, and those with economic hardship), while also ensuring that the church\'s physical facilities are ready to support worship as a tangible expression of ministry.',
+        ],
+        'Majelis Bidang Ibadah' => [
+            'id' => 'Bertanggung jawab merancang dan mengawasi seluruh tata ibadah (liturgi) agar teologis, tertib, dan berpusat pada Injil. Ketua Bidang Ibadah memastikan bahwa nyanyian, doa, dan sakramen yang dilakukan bukan untuk "menghibur" jemaat, melainkan untuk memuliakan Allah dan membangun iman jemaat melalui sarana anugerah yang benar.',
+            'en' => 'Responsible for designing and overseeing the entire order of worship (liturgy) so that it is theological, orderly, and Gospel-centered. The Head of the Worship Assembly ensures that the songs, prayers, and sacraments carried out are not meant to "entertain" the congregation, but to glorify God and build the faith of the congregation through the proper means of grace.',
+        ],
+        'Ketua Pengurus Lokal' => [
+            'id' => 'Bertanggung jawab memimpin operasional dan penggembalaan di tingkat wilayah/cabang sesuai arahan Majelis Pusat. Ketua Pengurus memastikan bahwa visi besar gereja "mendarat" dan terimplementasi secara kontekstual di wilayahnya, serta menciptakan persekutuan yang hangat di mana setiap jemaat merasa diperhatikan dan bertumbuh.',
+            'en' => 'Responsible for leading operations and shepherding at the regional/branch level in accordance with the direction of the Central Assembly. The Local Branch Chair ensures that the church\'s larger vision "lands" and is implemented contextually in the branch, while also creating a warm fellowship where every congregant feels cared for and grows.',
+        ],
+    ];
+}
+
+function bidang_translate_main_title(string $title, string $language = 'id'): string
+{
+    $language = strtolower(trim($language)) === 'en' ? 'en' : 'id';
+    $map = bidang_base_title_translations();
+    if (isset($map[$title][$language])) {
+        return (string)$map[$title][$language];
+    }
+    return $title;
+}
+
+function bidang_display_title(string $title, string $language = 'id'): string
+{
+    $parts = bidang_title_parts($title);
+    $main = trim((string)($parts['main'] ?? ''));
+    $cabang = trim((string)($parts['cabang'] ?? ''));
+    if ($main === '') {
+        return '';
+    }
+
+    $translatedMain = bidang_translate_main_title($main, $language);
+    if ($cabang === '') {
+        return $translatedMain;
+    }
+
+    return $translatedMain . ' - ' . $cabang;
+}
+
+function bidang_default_description_text(string $title, string $language = 'id'): string
+{
+    $language = strtolower(trim($language)) === 'en' ? 'en' : 'id';
+    $parts = bidang_title_parts($title);
+    $main = trim((string)($parts['main'] ?? $title));
+    $map = bidang_default_description_map();
+    if (isset($map[$main][$language])) {
+        return (string)$map[$main][$language];
+    }
+
+    if ($language === 'en') {
+        return 'Description for ' . bidang_display_title($title, 'en') . '.';
+    }
+
+    return 'Deskripsi untuk ' . bidang_display_title($title, 'id') . '.';
+}
+
+function bidang_display_description(array $bidangItem, string $language = 'id'): string
+{
+    $language = strtolower(trim($language)) === 'en' ? 'en' : 'id';
+    $title = trim((string)($bidangItem['title'] ?? ''));
+    $description = trim((string)($bidangItem['description'] ?? ''));
+    $descriptionEn = trim((string)($bidangItem['description_en'] ?? ''));
+    if ($description === '') {
+        $description = bidang_default_description_text($title, 'id');
+    }
+    if ($descriptionEn === '') {
+        $descriptionEn = bidang_default_description_text($title, 'en');
+    }
+
+    return $language === 'en' ? $descriptionEn : $description;
+}
+
+function is_legacy_bidang_placeholder_description(string $title, string $description): bool
+{
+    $title = trim($title);
+    $description = trim($description);
+    if ($title === '' || $description === '') {
+        return false;
+    }
+
+    return $description === ('Template deskripsi sementara untuk ' . $title . '. Silakan ubah isi deskripsi sesuai kebutuhan.');
 }
 
 function is_ketua_pengurus_lokal_bidang(string $title): bool
@@ -1036,6 +1355,7 @@ function default_bidang_data(): array
         $result[] = [
             'title' => $title,
             'description' => default_bidang_description($title),
+            'description_en' => bidang_default_description_text($title, 'en'),
         ];
     }
 
@@ -1061,6 +1381,7 @@ function load_bidang_data(): array
             $result[] = [
                 'title' => $title,
                 'description' => default_bidang_description($title),
+                'description_en' => bidang_default_description_text($title, 'en'),
             ];
             continue;
         }
@@ -1077,11 +1398,18 @@ function load_bidang_data(): array
         $description = trim((string)($item['description'] ?? ''));
         if ($description === '') {
             $description = default_bidang_description($title);
+        } elseif (is_legacy_bidang_placeholder_description($title, $description)) {
+            $description = bidang_default_description_text($title, 'id');
+        }
+        $descriptionEn = trim((string)($item['description_en'] ?? ''));
+        if ($descriptionEn === '') {
+            $descriptionEn = bidang_default_description_text($title, 'en');
         }
 
         $result[] = [
             'title' => $title,
             'description' => $description,
+            'description_en' => $descriptionEn,
         ];
     }
 
@@ -5453,28 +5781,29 @@ if ($page === 'bidang') {
                 }
             }
         </style>
+        <?php render_language_switcher_head(); ?>
     </head>
     <body>
         <section class="card">
             <div class="topbar">
                 <div class="topbar-copy">
-                    <h1>Halaman Pemilihan</h1>
-                    <p>Pilih bidang yang diinginkan. Login sebagai <strong><?= h_name($username) ?></strong> (<?= h($asalCabang) ?>).</p>
+                    <h1 data-i18n="bidang_title">Halaman Pemilihan</h1>
+                    <p data-i18n-html="bidang_intro" data-i18n-vars="<?= h((string)json_encode(['username' => h_name($username), 'branch' => h($asalCabang)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">Pilih bidang yang diinginkan. Login sebagai <strong><?= h_name($username) ?></strong> (<?= h($asalCabang) ?>).</p>
                 </div>
                 <div class="top-actions">
                     <?php if ($isAdmin): ?>
-                        <a class="btn btn-dashboard" href="<?= h(app_index_url(['page' => 'dashboard'])) ?>">Dashboard</a>
-                        <a class="btn btn-kandidat" href="<?= h(app_index_url(['page' => 'kandidat'])) ?>">Kandidat</a>
+                        <a class="btn btn-dashboard" href="<?= h(app_index_url(['page' => 'dashboard'])) ?>" data-i18n="nav_dashboard">Dashboard</a>
+                        <a class="btn btn-kandidat" href="<?= h(app_index_url(['page' => 'kandidat'])) ?>" data-i18n="nav_candidate">Kandidat</a>
                     <?php endif; ?>
                     <?php if ($canAccessWawancara): ?>
-                        <a class="btn btn-wawancara" href="<?= h(app_index_url(['page' => 'wawancara'])) ?>">Wawancara</a>
+                        <a class="btn btn-wawancara" href="<?= h(app_index_url(['page' => 'wawancara'])) ?>" data-i18n="nav_interview">Wawancara</a>
                     <?php endif; ?>
                     <?php if ($canAccessGembalaLokal): ?>
-                        <a class="btn btn-gembala" href="<?= h(app_index_url(['page' => 'gembala_lokal'])) ?>">Pantauan Cabang</a>
+                        <a class="btn btn-gembala" href="<?= h(app_index_url(['page' => 'gembala_lokal'])) ?>" data-i18n="nav_branch_monitor">Pantauan Cabang</a>
                     <?php endif; ?>
                     <form class="logout-form" method="post" action="<?= h(app_index_url(['page' => 'logout'])) ?>">
                         <input type="hidden" name="csrf_token" value="<?= h($logoutToken) ?>">
-                        <button class="btn" type="submit">Logout</button>
+                        <button class="btn" type="submit" data-i18n="nav_logout">Logout</button>
                     </form>
                 </div>
             </div>
@@ -5504,25 +5833,39 @@ if ($page === 'bidang') {
                     }
                     ?>
                     <article class="bidang-item<?= $isVoted ? ' inactive' : ' active' ?>">
-                        <h2 class="bidang-title"><?= h($bidangMainTitle) ?></h2>
+                        <h2 class="bidang-title" data-lang-text-id="<?= h($bidangMainTitle) ?>" data-lang-text-en="<?= h(bidang_translate_main_title($bidangMainTitle, 'en')) ?>"><?= h($bidangMainTitle) ?></h2>
                         <?php if ($bidangCabangTitle !== ''): ?>
                             <p class="bidang-cabang"><?= h($bidangCabangTitle) ?></p>
                         <?php endif; ?>
                         <p class="picked-candidate<?= $isVoted ? '' : ' empty' ?>">
-                            <span class="picked-label">Kandidat terpilih:</span>
+                            <span class="picked-label" data-i18n="picked_candidate_label">Kandidat terpilih:</span>
                             <span class="picked-name"><?= h($isVoted ? display_name_text($pickedName) : $pickedName) ?></span>
                         </p>
                         <?php if ($isVoted): ?>
-                            <button class="btn-pilih voted" type="button" disabled>Sudah Vote</button>
+                            <button class="btn-pilih voted" type="button" disabled data-i18n="bidang_status_voted">Sudah Vote</button>
                         <?php elseif (!$votingOpen): ?>
-                            <button class="btn-pilih closed" type="button" disabled>Pemilihan Ditutup</button>
+                            <button class="btn-pilih closed" type="button" disabled data-i18n="bidang_status_closed">Pemilihan Ditutup</button>
                         <?php else: ?>
-                            <a class="btn-pilih" href="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => $bidangTitle])) ?>">Pilih Sekarang</a>
+                            <a class="btn-pilih" href="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => $bidangTitle])) ?>" data-i18n="bidang_choose_now">Pilih Sekarang</a>
                         <?php endif; ?>
                     </article>
                 <?php endforeach; ?>
             </div>
         </section>
+        <?php render_language_switcher(); ?>
+        <?php render_language_script([
+            'bidang_title' => ['id' => 'Halaman Pemilihan', 'en' => 'Voting Page'],
+            'bidang_intro' => ['id' => 'Pilih bidang yang diinginkan. Login sebagai <strong>{username}</strong> ({branch}).', 'en' => 'Choose the position you want. Signed in as <strong>{username}</strong> ({branch}).'],
+            'nav_dashboard' => ['id' => 'Dashboard', 'en' => 'Dashboard'],
+            'nav_candidate' => ['id' => 'Kandidat', 'en' => 'Candidates'],
+            'nav_interview' => ['id' => 'Wawancara', 'en' => 'Interviews'],
+            'nav_branch_monitor' => ['id' => 'Pantauan Cabang', 'en' => 'Branch Monitor'],
+            'nav_logout' => ['id' => 'Logout', 'en' => 'Logout'],
+            'picked_candidate_label' => ['id' => 'Kandidat terpilih:', 'en' => 'Selected candidate:'],
+            'bidang_status_voted' => ['id' => 'Sudah Vote', 'en' => 'Already Voted'],
+            'bidang_status_closed' => ['id' => 'Pemilihan Ditutup', 'en' => 'Voting Closed'],
+            'bidang_choose_now' => ['id' => 'Pilih Sekarang', 'en' => 'Choose Now'],
+        ]); ?>
     </body>
     </html>
     <?php
@@ -5870,55 +6213,56 @@ if ($page === 'gembala_lokal') {
                 }
             }
         </style>
+        <?php render_language_switcher_head(); ?>
     </head>
     <body>
         <div class="wrap">
             <section class="panel">
                 <div class="topbar">
                     <div class="topbar-copy">
-                        <h1>Pantauan Vote Cabang</h1>
+                        <h1 data-i18n="gembala_title">Pantauan Vote Cabang</h1>
                     </div>
                     <div class="top-actions">
-                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>" data-i18n="gembala_back">Kembali ke Halaman Bidang</a>
                     </div>
                 </div>
 
                 <div class="summary-grid">
                     <div class="summary-card">
-                        <span class="summary-label">User Cabang</span>
+                        <span class="summary-label" data-i18n="gembala_summary_users">User Cabang</span>
                         <strong class="summary-value"><?= (int)$totalUserCabang ?></strong>
-                        <p class="summary-note">Total user non-admin pada cabang ini.</p>
+                        <p class="summary-note" data-i18n="gembala_summary_users_note">Total user non-admin pada cabang ini.</p>
                     </div>
                     <div class="summary-card">
-                        <span class="summary-label">Belum Vote</span>
+                        <span class="summary-label" data-i18n="gembala_summary_not_voted">Belum Vote</span>
                         <strong class="summary-value"><?= (int)$belumVoteCount ?></strong>
-                        <p class="summary-note">Belum mengisi vote sama sekali.</p>
+                        <p class="summary-note" data-i18n="gembala_summary_not_voted_note">Belum mengisi vote sama sekali.</p>
                     </div>
                     <div class="summary-card">
-                        <span class="summary-label">Belum Lengkap</span>
+                        <span class="summary-label" data-i18n="gembala_summary_incomplete">Belum Lengkap</span>
                         <strong class="summary-value"><?= (int)$belumLengkapCount ?></strong>
-                        <p class="summary-note">Sudah mulai vote, tetapi belum selesai.</p>
+                        <p class="summary-note" data-i18n="gembala_summary_incomplete_note">Sudah mulai vote, tetapi belum selesai.</p>
                     </div>
                     <div class="summary-card">
-                        <span class="summary-label">Selesai</span>
+                        <span class="summary-label" data-i18n="gembala_summary_done">Selesai</span>
                         <strong class="summary-value"><?= (int)$selesaiCount ?></strong>
-                        <p class="summary-note">Sudah mengisi seluruh <?= (int)$totalBidangCabang ?> bidang cabang ini.</p>
+                        <p class="summary-note" data-i18n="gembala_summary_done_note" data-i18n-vars="<?= h((string)json_encode(['count' => (int)$totalBidangCabang], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">Sudah mengisi seluruh <?= (int)$totalBidangCabang ?> bidang cabang ini.</p>
                     </div>
                 </div>
 
                 <?php if ($pendingUsers === []): ?>
-                    <div class="empty-box">Semua user cabang ini sudah menyelesaikan vote.</div>
+                    <div class="empty-box" data-i18n="gembala_empty">Semua user cabang ini sudah menyelesaikan vote.</div>
                 <?php else: ?>
-                    <h2 class="section-title">User Yang Belum Menyelesaikan Vote</h2>
+                    <h2 class="section-title" data-i18n="gembala_section_pending">User Yang Belum Menyelesaikan Vote</h2>
                     <div class="table-wrap">
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Nama Lengkap</th>
-                                    <th>Username</th>
-                                    <th>Progress Vote</th>
-                                    <th>Sisa Bidang</th>
-                                    <th>Status</th>
+                                    <th data-i18n="gembala_table_name">Nama Lengkap</th>
+                                    <th data-i18n="gembala_table_username">Username</th>
+                                    <th data-i18n="gembala_table_progress">Progress Vote</th>
+                                    <th data-i18n="gembala_table_remaining">Sisa Bidang</th>
+                                    <th data-i18n="gembala_table_status">Status</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -5949,6 +6293,26 @@ if ($page === 'gembala_lokal') {
                 <?php endif; ?>
             </section>
         </div>
+        <?php render_language_switcher(); ?>
+        <?php render_language_script([
+            'gembala_title' => ['id' => 'Pantauan Vote Cabang', 'en' => 'Branch Voting Monitor'],
+            'gembala_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
+            'gembala_summary_users' => ['id' => 'User Cabang', 'en' => 'Branch Users'],
+            'gembala_summary_users_note' => ['id' => 'Total user non-admin pada cabang ini.', 'en' => 'Total non-admin users in this branch.'],
+            'gembala_summary_not_voted' => ['id' => 'Belum Vote', 'en' => 'Not Yet Voted'],
+            'gembala_summary_not_voted_note' => ['id' => 'Belum mengisi vote sama sekali.', 'en' => 'Have not submitted any votes yet.'],
+            'gembala_summary_incomplete' => ['id' => 'Belum Lengkap', 'en' => 'Incomplete'],
+            'gembala_summary_incomplete_note' => ['id' => 'Sudah mulai vote, tetapi belum selesai.', 'en' => 'Started voting, but not finished yet.'],
+            'gembala_summary_done' => ['id' => 'Selesai', 'en' => 'Completed'],
+            'gembala_summary_done_note' => ['id' => 'Sudah mengisi seluruh {count} bidang cabang ini.', 'en' => 'Completed all {count} positions for this branch.'],
+            'gembala_empty' => ['id' => 'Semua user cabang ini sudah menyelesaikan vote.', 'en' => 'All users in this branch have completed voting.'],
+            'gembala_section_pending' => ['id' => 'User Yang Belum Menyelesaikan Vote', 'en' => 'Users Who Have Not Finished Voting'],
+            'gembala_table_name' => ['id' => 'Nama Lengkap', 'en' => 'Full Name'],
+            'gembala_table_username' => ['id' => 'Username', 'en' => 'Username'],
+            'gembala_table_progress' => ['id' => 'Progress Vote', 'en' => 'Voting Progress'],
+            'gembala_table_remaining' => ['id' => 'Sisa Bidang', 'en' => 'Remaining Positions'],
+            'gembala_table_status' => ['id' => 'Status', 'en' => 'Status'],
+        ]); ?>
     </body>
     </html>
     <?php
@@ -6990,23 +7354,24 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 }
             }
         </style>
+        <?php render_language_switcher_head(); ?>
     </head>
     <body>
         <main class="wrap">
             <section class="panel">
                 <div class="topbar">
                     <div>
-                        <h1 class="title"><?= h($isDashboardPage ? 'Dashboard Rekap Pemilihan' : 'Halaman Kandidat') ?></h1>
+                        <h1 class="title" data-i18n="<?= h($isDashboardPage ? 'dashboard_title' : 'dashboard_candidates_title') ?>"><?= h($isDashboardPage ? 'Dashboard Rekap Pemilihan' : 'Halaman Kandidat') ?></h1>
                     </div>
                     <div class="actions">
-                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>" data-i18n="dashboard_back">Kembali ke Halaman Bidang</a>
                     </div>
                 </div>
                 <?php if ($isDashboardPage): ?>
                 <div class="deadline-box">
-                    <p class="deadline-title">Deadline Pemilihan</p>
-                    <p class="deadline-meta">Batas akhir pemilihan sampai <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.</p>
-                    <span class="deadline-status <?= $dashboardElectionClosed ? 'closed' : 'open' ?>">
+                    <p class="deadline-title" data-i18n="dashboard_deadline_title">Deadline Pemilihan</p>
+                    <p class="deadline-meta" data-i18n-html="dashboard_deadline_meta" data-i18n-vars="<?= h((string)json_encode(['date' => ELECTION_DEADLINE_LABEL], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">Batas akhir pemilihan sampai <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.</p>
+                    <span class="deadline-status <?= $dashboardElectionClosed ? 'closed' : 'open' ?>" data-i18n="<?= h($dashboardElectionClosed ? 'dashboard_deadline_closed' : 'dashboard_deadline_open') ?>">
                         <?= $dashboardElectionClosed ? 'Masa pemilihan berakhir' : 'Masa pemilihan masih berjalan' ?>
                     </span>
                 </div>
@@ -7116,16 +7481,16 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 <?php else: ?>
                     <div class="kandidat-filter-bar">
                         <p class="kandidat-filter-label">Filter proses kandidat</p>
-                        <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat">
-                            <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?>>Semua</option>
-                            <option value="belum_assign" <?= $kandidatProcessFilter === 'belum_assign' ? 'selected' : '' ?>>Belum di-assign</option>
-                            <option value="belum_lanjut" <?= $kandidatProcessFilter === 'belum_lanjut' ? 'selected' : '' ?>>Belum Lanjut Proses</option>
-                            <option value="lanjut" <?= $kandidatProcessFilter === 'lanjut' ? 'selected' : '' ?>>Lanjut Proses</option>
-                            <option value="screening" <?= $kandidatProcessFilter === 'screening' ? 'selected' : '' ?>>Lolos Screening</option>
-                            <option value="scorecard_submitted" <?= $kandidatProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?>>Sudah Submit Score Card</option>
+                        <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="dashboard_candidate_filter_label">
+                            <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
+                            <option value="belum_assign" <?= $kandidatProcessFilter === 'belum_assign' ? 'selected' : '' ?> data-i18n="filter_unassigned">Belum di-assign</option>
+                            <option value="belum_lanjut" <?= $kandidatProcessFilter === 'belum_lanjut' ? 'selected' : '' ?> data-i18n="filter_not_advanced">Belum Lanjut Proses</option>
+                            <option value="lanjut" <?= $kandidatProcessFilter === 'lanjut' ? 'selected' : '' ?> data-i18n="filter_advanced">Lanjut Proses</option>
+                            <option value="screening" <?= $kandidatProcessFilter === 'screening' ? 'selected' : '' ?> data-i18n="filter_screening">Lolos Screening</option>
+                            <option value="scorecard_submitted" <?= $kandidatProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?> data-i18n="filter_scorecard_submitted">Sudah Submit Score Card</option>
                         </select>
                     </div>
-                    <div class="kandidat-filter-empty" id="kandidatFilterEmpty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
+                    <div class="kandidat-filter-empty" id="kandidatFilterEmpty" data-i18n="dashboard_candidate_filter_empty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
                     <div class="rekap-grid">
                         <?php foreach ($bidangSummary as $bidang => $summary): ?>
                             <?php
@@ -7139,7 +7504,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                             <article class="rekap-card" data-kandidat-card="1">
                                 <div class="rekap-head">
                                     <h2 class="rekap-title">
-                                        <?= h($rekapMainTitle) ?>
+                                        <span data-lang-text-id="<?= h($rekapMainTitle) ?>" data-lang-text-en="<?= h(bidang_translate_main_title($rekapMainTitle, 'en')) ?>"><?= h($rekapMainTitle) ?></span>
                                         <?php if ($rekapCabangTitle !== ''): ?>
                                             <span class="rekap-title-sub"><?= h($rekapCabangTitle) ?></span>
                                         <?php endif; ?>
@@ -7412,6 +7777,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 <?php endif; ?>
             </section>
         </main>
+        <?php render_language_switcher(); ?>
         <script>
             const kandidatProcessFilter = document.getElementById('kandidatProcessFilter');
             const kandidatFilterEmpty = document.getElementById('kandidatFilterEmpty');
@@ -7490,6 +7856,23 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 applyKandidatProcessFilter();
             }
         </script>
+        <?php render_language_script([
+            'dashboard_title' => ['id' => 'Dashboard Rekap Pemilihan', 'en' => 'Voting Summary Dashboard'],
+            'dashboard_candidates_title' => ['id' => 'Halaman Kandidat', 'en' => 'Candidates Page'],
+            'dashboard_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
+            'dashboard_deadline_title' => ['id' => 'Deadline Pemilihan', 'en' => 'Voting Deadline'],
+            'dashboard_deadline_meta' => ['id' => 'Batas akhir pemilihan sampai <strong>{date}</strong>.', 'en' => 'Voting is open until <strong>{date}</strong>.'],
+            'dashboard_deadline_closed' => ['id' => 'Masa pemilihan berakhir', 'en' => 'Voting period ended'],
+            'dashboard_deadline_open' => ['id' => 'Masa pemilihan masih berjalan', 'en' => 'Voting is still open'],
+            'dashboard_candidate_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
+            'filter_all' => ['id' => 'Semua', 'en' => 'All'],
+            'filter_unassigned' => ['id' => 'Belum di-assign', 'en' => 'Not assigned'],
+            'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
+            'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
+            'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
+            'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
+            'dashboard_candidate_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
+        ]); ?>
     </body>
     </html>
     <?php
@@ -8683,16 +9066,17 @@ if ($page === 'wawancara') {
                 }
             }
         </style>
+        <?php render_language_switcher_head(); ?>
     </head>
     <body>
         <main class="wrap">
             <section class="card">
                 <div class="topbar">
                     <div>
-                        <h1>Halaman Wawancara</h1>
+                        <h1 data-i18n="wawancara_title">Halaman Wawancara</h1>
                     </div>
                     <div class="top-actions">
-                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">Kembali ke Halaman Bidang</a>
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>" data-i18n="wawancara_back">Kembali ke Halaman Bidang</a>
                     </div>
                 </div>
                 <?php if ($wawancaraSuccessMessage !== ''): ?>
@@ -8705,16 +9089,16 @@ if ($page === 'wawancara') {
                     <p class="empty"><?= h($wawancaraEmptyMessage) ?></p>
                 <?php else: ?>
                     <div class="wawancara-filter-bar">
-                        <p class="wawancara-filter-label">Filter proses kandidat</p>
-                        <select class="wawancara-filter-select" id="wawancaraProcessFilter" aria-label="Filter proses kandidat">
-                            <option value="all" <?= $wawancaraProcessFilter === 'all' ? 'selected' : '' ?>>Semua</option>
-                            <option value="belum_lanjut" <?= $wawancaraProcessFilter === 'belum_lanjut' ? 'selected' : '' ?>>Belum Lanjut Proses</option>
-                            <option value="lanjut" <?= $wawancaraProcessFilter === 'lanjut' ? 'selected' : '' ?>>Lanjut Proses</option>
-                            <option value="screening" <?= $wawancaraProcessFilter === 'screening' ? 'selected' : '' ?>>Lolos Screening</option>
-                            <option value="scorecard_submitted" <?= $wawancaraProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?>>Sudah Submit Score Card</option>
+                        <p class="wawancara-filter-label" data-i18n="wawancara_filter_label">Filter proses kandidat</p>
+                        <select class="wawancara-filter-select" id="wawancaraProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="wawancara_filter_label">
+                            <option value="all" <?= $wawancaraProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
+                            <option value="belum_lanjut" <?= $wawancaraProcessFilter === 'belum_lanjut' ? 'selected' : '' ?> data-i18n="filter_not_advanced">Belum Lanjut Proses</option>
+                            <option value="lanjut" <?= $wawancaraProcessFilter === 'lanjut' ? 'selected' : '' ?> data-i18n="filter_advanced">Lanjut Proses</option>
+                            <option value="screening" <?= $wawancaraProcessFilter === 'screening' ? 'selected' : '' ?> data-i18n="filter_screening">Lolos Screening</option>
+                            <option value="scorecard_submitted" <?= $wawancaraProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?> data-i18n="filter_scorecard_submitted">Sudah Submit Score Card</option>
                         </select>
                     </div>
-                    <div class="wawancara-filter-empty" id="wawancaraFilterEmpty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
+                    <div class="wawancara-filter-empty" id="wawancaraFilterEmpty" data-i18n="wawancara_filter_empty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
                     <div class="rekap-grid">
                         <?php foreach ($wawancaraBidangSummary as $bidang => $summary): ?>
                             <?php
@@ -8728,7 +9112,7 @@ if ($page === 'wawancara') {
                             <article class="rekap-card" data-wawancara-card="1">
                                 <div class="rekap-head">
                                     <h2 class="rekap-title">
-                                        <?= h($wawancaraMainTitle) ?>
+                                        <span data-lang-text-id="<?= h($wawancaraMainTitle) ?>" data-lang-text-en="<?= h(bidang_translate_main_title($wawancaraMainTitle, 'en')) ?>"><?= h($wawancaraMainTitle) ?></span>
                                         <?php if ($wawancaraCabangTitle !== ''): ?>
                                             <span class="rekap-title-sub"><?= h($wawancaraCabangTitle) ?></span>
                                         <?php endif; ?>
@@ -9977,6 +10361,18 @@ if ($page === 'wawancara') {
                     .replace(/'/g, '&#039;');
             }
         </script>
+        <?php render_language_switcher(); ?>
+        <?php render_language_script([
+            'wawancara_title' => ['id' => 'Halaman Wawancara', 'en' => 'Interview Page'],
+            'wawancara_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
+            'wawancara_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
+            'filter_all' => ['id' => 'Semua', 'en' => 'All'],
+            'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
+            'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
+            'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
+            'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
+            'wawancara_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
+        ]); ?>
     </body>
     </html>
     <?php
@@ -10424,18 +10820,19 @@ if ($page === 'pemilihan') {
                 }
             }
         </style>
+        <?php render_language_switcher_head(); ?>
     </head>
     <body>
         <section class="card">
-            <h1><?= h($selectedBidangMainTitle) ?></h1>
+            <h1 data-lang-text-id="<?= h($selectedBidangMainTitle) ?>" data-lang-text-en="<?= h(bidang_translate_main_title($selectedBidangMainTitle, 'en')) ?>"><?= h($selectedBidangMainTitle) ?></h1>
             <?php if ($selectedBidangCabangTitle !== ''): ?>
                 <p class="title-cabang"><?= h($selectedBidangCabangTitle) ?></p>
             <?php endif; ?>
-            <p class="desc"><?= h((string)$selectedBidang['description']) ?></p>
+            <p class="desc" data-lang-text-id="<?= h(bidang_display_description($selectedBidang, 'id')) ?>" data-lang-text-en="<?= h(bidang_display_description($selectedBidang, 'en')) ?>"><?= h(bidang_display_description($selectedBidang, 'id')) ?></p>
 
             <form class="form-box" method="post" action="<?= h(app_index_url(['page' => 'pemilihan', 'bidang' => (string)$selectedBidang['title']])) ?>">
                 <input type="hidden" name="csrf_token" value="<?= h($pemilihanCsrfToken) ?>">
-                <label for="kandidat_search">Cari & pilih kandidat majelis</label>
+                <label for="kandidat_search" data-i18n="pemilihan_candidate_label">Cari & pilih kandidat majelis</label>
                 <div class="kandidat-combobox" id="kandidat_combobox">
                     <input
                         class="input-kandidat name-display-uppercase"
@@ -10443,6 +10840,7 @@ if ($page === 'pemilihan') {
                         name="kandidat_search"
                         type="text"
                         placeholder="Ketik nama kandidat..."
+                        data-i18n-placeholder="pemilihan_candidate_placeholder"
                         autocomplete="off"
                         inputmode="search"
                         role="combobox"
@@ -10458,6 +10856,7 @@ if ($page === 'pemilihan') {
                         id="kandidat_toggle"
                         type="button"
                         aria-label="Tampilkan daftar kandidat"
+                        data-i18n-aria-label="pemilihan_toggle_label"
                         aria-haspopup="listbox"
                         aria-controls="kandidat_dropdown"
                         aria-expanded="false"
@@ -10481,13 +10880,13 @@ if ($page === 'pemilihan') {
                                 data-label="<?= h($optionLabel) ?>"
                             ><?= h($optionLabel) ?></button>
                         <?php endforeach; ?>
-                        <div class="kandidat-empty" id="kandidat_empty" hidden>Tidak ada kandidat yang cocok.</div>
+                        <div class="kandidat-empty" id="kandidat_empty" hidden data-i18n="pemilihan_no_candidate_match">Tidak ada kandidat yang cocok.</div>
                     </div>
                 </div>
                 <input type="hidden" id="kandidat_id" name="kandidat_id" value="<?= h($selectedKandidatId) ?>">
 
-                <button class="btn-submit" type="submit" <?= $kandidatList === [] ? 'disabled' : '' ?>>Simpan Pemilihan</button>
-                <p class="vote-note">Perhatian: setelah vote disimpan, pilihan kandidat pada bidang ini tidak dapat diubah.</p>
+                <button class="btn-submit" type="submit" <?= $kandidatList === [] ? 'disabled' : '' ?> data-i18n="pemilihan_submit">Simpan Pemilihan</button>
+                <p class="vote-note" data-i18n="pemilihan_vote_note">Perhatian: setelah vote disimpan, pilihan kandidat pada bidang ini tidak dapat diubah.</p>
             </form>
 
             <?php if ($saveError !== ''): ?>
@@ -10497,23 +10896,28 @@ if ($page === 'pemilihan') {
             <div class="actions">
                 <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>">
                     <span class="btn-back-arrow" aria-hidden="true">&larr;</span>
-                    <span>Kembali ke Bidang</span>
+                    <span data-i18n="pemilihan_back">Kembali ke Bidang</span>
                 </a>
             </div>
         </section>
         <div class="confirm-modal" id="confirm-modal" hidden>
             <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-                <h2 class="confirm-title" id="confirm-title">Konfirmasi Pemilihan</h2>
+                <h2 class="confirm-title" id="confirm-title" data-i18n="pemilihan_confirm_title">Konfirmasi Pemilihan</h2>
                 <p class="confirm-text">
-                    Anda akan memilih <span class="confirm-selected" id="confirm-selected">-</span> sebagai Kandidat <span class="confirm-bidang"><?= h($selectedBidangLabelModal) ?></span>.
-                    Setelah disimpan, pilihan pada bidang ini tidak dapat diubah.
+                    <span data-i18n="pemilihan_confirm_prefix">Anda akan memilih</span>
+                    <span class="confirm-selected" id="confirm-selected">-</span>
+                    <span data-i18n="pemilihan_confirm_middle">sebagai Kandidat</span>
+                    <span class="confirm-bidang" data-lang-text-id="<?= h($selectedBidangLabelModal) ?>" data-lang-text-en="<?= h(bidang_display_title($selectedBidangTitle, 'en')) ?>"><?= h($selectedBidangLabelModal) ?></span>.
+                    <span data-i18n="pemilihan_confirm_suffix">Setelah disimpan, pilihan pada bidang ini tidak dapat diubah.</span>
                 </p>
                 <div class="confirm-actions">
-                    <button class="confirm-btn cancel" type="button" id="confirm-cancel">Batal</button>
-                    <button class="confirm-btn ok" type="button" id="confirm-ok">Ya, Simpan</button>
+                    <button class="confirm-btn cancel" type="button" id="confirm-cancel" data-i18n="pemilihan_confirm_cancel">Batal</button>
+                    <button class="confirm-btn ok" type="button" id="confirm-ok" data-i18n="pemilihan_confirm_ok">Ya, Simpan</button>
                 </div>
             </div>
         </div>
+
+        <?php render_language_switcher(); ?>
 
         <script>
             (function () {
@@ -10759,7 +11163,9 @@ if ($page === 'pemilihan') {
                     syncSelectedKandidat();
                     if (!kandidatIdInput.value) {
                         event.preventDefault();
-                        kandidatInput.setCustomValidity('Pilih kandidat dari daftar yang tersedia.');
+                        kandidatInput.setCustomValidity(window.majelisLang && typeof window.majelisLang.t === 'function'
+                            ? window.majelisLang.t('pemilihan_invalid_candidate', {}, 'Pilih kandidat dari daftar yang tersedia.')
+                            : 'Pilih kandidat dari daftar yang tersedia.');
                         kandidatInput.reportValidity();
                         return;
                     }
@@ -10824,6 +11230,22 @@ if ($page === 'pemilihan') {
                 filterOptions();
             })();
         </script>
+        <?php render_language_script([
+            'pemilihan_candidate_label' => ['id' => 'Cari & pilih kandidat majelis', 'en' => 'Search & choose an assembly candidate'],
+            'pemilihan_candidate_placeholder' => ['id' => 'Ketik nama kandidat...', 'en' => 'Type a candidate name...'],
+            'pemilihan_toggle_label' => ['id' => 'Tampilkan daftar kandidat', 'en' => 'Show candidate list'],
+            'pemilihan_no_candidate_match' => ['id' => 'Tidak ada kandidat yang cocok.', 'en' => 'No matching candidates found.'],
+            'pemilihan_submit' => ['id' => 'Simpan Pemilihan', 'en' => 'Save Vote'],
+            'pemilihan_vote_note' => ['id' => 'Perhatian: setelah vote disimpan, pilihan kandidat pada bidang ini tidak dapat diubah.', 'en' => 'Note: once the vote is saved, the candidate choice for this position cannot be changed.'],
+            'pemilihan_back' => ['id' => 'Kembali ke Bidang', 'en' => 'Back to Positions'],
+            'pemilihan_confirm_title' => ['id' => 'Konfirmasi Pemilihan', 'en' => 'Confirm Vote'],
+            'pemilihan_confirm_prefix' => ['id' => 'Anda akan memilih', 'en' => 'You are about to choose'],
+            'pemilihan_confirm_middle' => ['id' => 'sebagai Kandidat', 'en' => 'as the candidate for'],
+            'pemilihan_confirm_suffix' => ['id' => 'Setelah disimpan, pilihan pada bidang ini tidak dapat diubah.', 'en' => 'Once saved, the choice for this position cannot be changed.'],
+            'pemilihan_confirm_cancel' => ['id' => 'Batal', 'en' => 'Cancel'],
+            'pemilihan_confirm_ok' => ['id' => 'Ya, Simpan', 'en' => 'Yes, Save'],
+            'pemilihan_invalid_candidate' => ['id' => 'Pilih kandidat dari daftar yang tersedia.', 'en' => 'Choose a candidate from the available list.'],
+        ]); ?>
     </body>
     </html>
     <?php
@@ -11004,54 +11426,66 @@ if ($page !== 'login') {
             font-size: 15px;
         }
     </style>
+    <?php render_language_switcher_head(); ?>
 </head>
 <body>
     <section class="card">
-        <h1>Login</h1>
+        <h1 data-i18n="login_title">Login</h1>
         <?php if ($error !== ''): ?>
             <div class="error"><?= h($error) ?></div>
         <?php endif; ?>
-        <div class="notice info">
+        <div
+            class="notice info"
+            data-i18n-html="login_deadline_notice"
+            data-i18n-vars="<?= h((string)json_encode(['date' => ELECTION_DEADLINE_LABEL], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"
+        >
             Deadline pemilihan: <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.
         </div>
         <?php if ($electionClosed): ?>
-            <div class="notice warning">
+            <div
+                class="notice warning"
+                data-i18n-html="login_deadline_closed"
+                data-i18n-vars="<?= h((string)json_encode(['date' => ELECTION_DEADLINE_LABEL], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"
+            >
                 Masa pemilihan sudah berakhir pada <strong><?= h(ELECTION_DEADLINE_LABEL) ?></strong>.
             </div>
         <?php endif; ?>
 
         <form method="post" action="<?= h(app_index_url(['page' => 'login'])) ?>">
             <input type="hidden" name="csrf_token" value="<?= h($csrfFormToken) ?>">
-            <label for="username">Username</label>
+            <label for="username" data-i18n="login_username_label">Username</label>
             <input
                 id="username"
                 name="username"
                 type="text"
                 placeholder="masukkan username akun"
+                data-i18n-placeholder="login_username_placeholder"
                 value="<?= h($loginSelectedUsername) ?>"
                 autocomplete="username"
                 required
                 autofocus
             >
 
-            <label for="password">Password</label>
-            <input id="password" name="password" type="password" placeholder="masukkan password akun" autocomplete="current-password" required>
+            <label for="password" data-i18n="login_password_label">Password</label>
+            <input id="password" name="password" type="password" placeholder="masukkan password akun" data-i18n-placeholder="login_password_placeholder" autocomplete="current-password" required>
 
-            <button type="submit">Masuk</button>
+            <button type="submit" data-i18n="login_submit">Masuk</button>
         </form>
     </section>
 
     <div class="welcome-modal" id="welcome-modal" hidden>
         <div class="welcome-dialog" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
-            <button class="welcome-close" type="button" id="welcome-close" aria-label="Tutup popup"></button>
-            <h2 class="welcome-title" id="welcome-title"><strong>Shalom REC Indonesia!</strong></h2>
-            <p class="welcome-text">
+            <button class="welcome-close" type="button" id="welcome-close" aria-label="Tutup popup" data-i18n-aria-label="welcome_close_label"></button>
+            <h2 class="welcome-title" id="welcome-title" data-i18n-html="welcome_title"><strong>Shalom REC Indonesia!</strong></h2>
+            <p class="welcome-text" data-i18n="welcome_text">
                 Terima kasih atas partisipasi Anda dalam pemilihan kandidat Majelis REC Indonesia periode 2026-2029.
                 Suara Anda adalah wujud kasih yang nyata bagi pembangunan Tubuh Kristus. Mari nyatakan kehendak-Nya
                 melalui pilihan Anda hari ini. Selamat memilih dengan sukacita!
             </p>
         </div>
     </div>
+
+    <?php render_language_switcher(); ?>
 
     <script>
         (function () {
@@ -11099,5 +11533,21 @@ if ($page !== 'login') {
             });
         })();
     </script>
+    <?php render_language_script([
+        'login_title' => ['id' => 'Login', 'en' => 'Login'],
+        'login_deadline_notice' => ['id' => 'Deadline pemilihan: <strong>{date}</strong>.', 'en' => 'Voting deadline: <strong>{date}</strong>.'],
+        'login_deadline_closed' => ['id' => 'Masa pemilihan sudah berakhir pada <strong>{date}</strong>.', 'en' => 'The voting period ended on <strong>{date}</strong>.'],
+        'login_username_label' => ['id' => 'Username', 'en' => 'Username'],
+        'login_username_placeholder' => ['id' => 'masukkan username akun', 'en' => 'enter your account username'],
+        'login_password_label' => ['id' => 'Password', 'en' => 'Password'],
+        'login_password_placeholder' => ['id' => 'masukkan password akun', 'en' => 'enter your account password'],
+        'login_submit' => ['id' => 'Masuk', 'en' => 'Sign In'],
+        'welcome_close_label' => ['id' => 'Tutup popup', 'en' => 'Close popup'],
+        'welcome_title' => ['id' => '<strong>Shalom REC Indonesia!</strong>', 'en' => '<strong>Shalom REC Indonesia!</strong>'],
+        'welcome_text' => [
+            'id' => 'Terima kasih atas partisipasi Anda dalam pemilihan kandidat Majelis REC Indonesia periode 2026-2029. Suara Anda adalah wujud kasih yang nyata bagi pembangunan Tubuh Kristus. Mari nyatakan kehendak-Nya melalui pilihan Anda hari ini. Selamat memilih dengan sukacita!',
+            'en' => 'Thank you for your participation in the election of REC Indonesia Assembly candidates for the 2026-2029 term. Your vote is a tangible expression of love for building the Body of Christ. Let us express His will through your choice today. Vote with joy.'
+        ],
+    ]); ?>
 </body>
 </html>
