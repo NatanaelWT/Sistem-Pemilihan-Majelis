@@ -491,6 +491,11 @@ function render_language_script(array $translations): void
                     const fallback = element.getAttribute('aria-label') || '';
                     element.setAttribute('aria-label', translate(key, nextLang, readVars(element), fallback));
                 });
+                document.querySelectorAll('[data-i18n-title]').forEach(function (element) {
+                    const key = element.getAttribute('data-i18n-title');
+                    const fallback = element.getAttribute('title') || '';
+                    element.setAttribute('title', translate(key, nextLang, readVars(element), fallback));
+                });
                 document.querySelectorAll('[data-i18n-value]').forEach(function (element) {
                     const key = element.getAttribute('data-i18n-value');
                     const fallback = element.value || '';
@@ -507,6 +512,12 @@ function render_language_script(array $translations): void
                         ? (element.getAttribute('data-lang-html-en') || '')
                         : (element.getAttribute('data-lang-html-id') || '');
                     element.innerHTML = value;
+                });
+                document.querySelectorAll('[data-lang-title-id][data-lang-title-en]').forEach(function (element) {
+                    const value = nextLang === 'en'
+                        ? (element.getAttribute('data-lang-title-en') || '')
+                        : (element.getAttribute('data-lang-title-id') || '');
+                    element.setAttribute('title', value);
                 });
                 languageButtons.forEach(function (button) {
                     const buttonLang = normalizeLanguage(button.getAttribute('data-language-option') || '');
@@ -1111,14 +1122,14 @@ function default_bidang_description(string $title): string
 function bidang_base_title_translations(): array
 {
     return [
-        'Ketua Majelis' => ['id' => 'Ketua Majelis', 'en' => 'Assembly Chair'],
-        'Sekretaris Majelis' => ['id' => 'Sekretaris Majelis', 'en' => 'Assembly Secretary'],
-        'Bendahara Majelis' => ['id' => 'Bendahara Majelis', 'en' => 'Assembly Treasurer'],
-        'Majelis Bidang Pemuridan' => ['id' => 'Majelis Bidang Pemuridan', 'en' => 'Discipleship Assembly'],
-        'Majelis Bidang Misi' => ['id' => 'Majelis Bidang Misi', 'en' => 'Mission Assembly'],
-        'Majelis Bidang Diakonia' => ['id' => 'Majelis Bidang Diakonia', 'en' => 'Diaconal Assembly'],
-        'Majelis Bidang Ibadah' => ['id' => 'Majelis Bidang Ibadah', 'en' => 'Worship Assembly'],
-        'Ketua Pengurus Lokal' => ['id' => 'Ketua Pengurus Lokal', 'en' => 'Local Branch Chair'],
+        'Ketua Majelis' => ['id' => 'Ketua Majelis', 'en' => 'Chairman of Elder'],
+        'Sekretaris Majelis' => ['id' => 'Sekretaris Majelis', 'en' => 'Secretary'],
+        'Bendahara Majelis' => ['id' => 'Bendahara Majelis', 'en' => 'Treasurer'],
+        'Majelis Bidang Pemuridan' => ['id' => 'Majelis Bidang Pemuridan', 'en' => 'Elder of Discipleship'],
+        'Majelis Bidang Misi' => ['id' => 'Majelis Bidang Misi', 'en' => 'Elder of Mission'],
+        'Majelis Bidang Diakonia' => ['id' => 'Majelis Bidang Diakonia', 'en' => 'Elder of Mercy Ministry'],
+        'Majelis Bidang Ibadah' => ['id' => 'Majelis Bidang Ibadah', 'en' => 'Elder of Worship'],
+        'Ketua Pengurus Lokal' => ['id' => 'Ketua Pengurus Lokal', 'en' => 'Leader for Local Branch'],
     ];
 }
 
@@ -1127,11 +1138,11 @@ function bidang_default_description_map(): array
     return [
         'Ketua Majelis' => [
             'id' => 'Bertanggung jawab untuk memimpin, memfasilitasi, dan mengoordinasikan fungsi Majelis Jemaat (Penatua dan Diaken) agar berjalan sesuai dengan tata gereja dan visi misi gereja. Ketua Majelis memastikan bahwa seluruh keputusan dan arah gereja tetap setia pada doktrin Reformed, berpusat pada Injil (Gospel-Centered), dan dilaksanakan dengan tata kelola yang rapi dan transparan.',
-            'en' => 'Responsible for leading, facilitating, and coordinating the functions of the Church Assembly (Elders and Deacons) so that they operate in accordance with church order and the church\'s vision and mission. The Assembly Chair ensures that every decision and direction of the church remains faithful to Reformed doctrine, centered on the Gospel (Gospel-Centered), and carried out with orderly and transparent governance.',
+            'en' => 'Responsible for leading, facilitating, and coordinating the functions of the church elders and deacons so that they operate in accordance with church order and the church\'s vision and mission. The Chairman of Elder ensures that every decision and direction of the church remains faithful to Reformed doctrine, centered on the Gospel (Gospel-Centered), and carried out with orderly and transparent governance.',
         ],
         'Sekretaris Majelis' => [
             'id' => 'Bertanggung jawab mengelola seluruh administrasi, dokumentasi, korespondensi, dan arsip gerejawi. Sekretaris memastikan bahwa sejarah gereja tercatat rapi, keputusan majelis terdokumentasi akurat, dan operasional organisasi berjalan sesuai dengan Tata Gereja yang berlaku.',
-            'en' => 'Responsible for managing all administration, documentation, correspondence, and church archives. The Secretary ensures that the history of the church is recorded properly, assembly decisions are documented accurately, and organizational operations run in accordance with the applicable Church Order.',
+            'en' => 'Responsible for managing all administration, documentation, correspondence, and church archives. The Secretary ensures that the history of the church is recorded properly, elder decisions are documented accurately, and organizational operations run in accordance with the applicable Church Order.',
         ],
         'Bendahara Majelis' => [
             'id' => 'Bertanggung jawab mengelola keuangan gereja dengan integritas mutlak, transparansi, dan prinsip penatalayanan Alkitabiah. Bendahara memastikan bahwa setiap sen uang persembahan jemaat dikelola secara bijaksana, dicatat dengan akurat, dan disalurkan untuk mendukung pekerjaan pemberitaan Injil dan pelayanan kasih.',
@@ -1143,19 +1154,19 @@ function bidang_default_description_map(): array
         ],
         'Majelis Bidang Misi' => [
             'id' => 'Bertanggung jawab merumuskan strategi, mengelola, dan mengawasi pelaksanaan Amanat Agung (Matius 28:19-20) di tingkat lokal (Penginjilan) dan lintas budaya (Misi/Zending). Ketua Bidang Misi memastikan gereja tidak menjadi "klub rohani" yang tertutup, melainkan komunitas yang bergerak keluar untuk memberitakan Injil Kerajaan Allah, baik melalui perkataan maupun perbuatan.',
-            'en' => 'Responsible for formulating strategy, managing, and overseeing the implementation of the Great Commission (Matthew 28:19-20) at the local level (Evangelism) and across cultures (Mission/Zending). The Head of the Mission Assembly ensures that the church does not become a closed "spiritual club," but rather a community that moves outward to proclaim the Gospel of the Kingdom of God, both through word and deed.',
+            'en' => 'Responsible for formulating strategy, managing, and overseeing the implementation of the Great Commission (Matthew 28:19-20) at the local level (Evangelism) and across cultures (Mission/Zending). The Elder of Mission ensures that the church does not become a closed "spiritual club," but rather a community that moves outward to proclaim the Gospel of the Kingdom of God, both through word and deed.',
         ],
         'Majelis Bidang Diakonia' => [
             'id' => 'Bertanggung jawab mengelola pelayanan kasih dan bantuan sosial gereja. Ketua Bidang Diakonia memimpin para diaken untuk mendeteksi, memverifikasi, dan merespons kebutuhan jemaat (janda, yatim piatu, orang sakit, yang kekurangan ekonomi) dengan bijaksana, serta memastikan fasilitas fisik gereja siap mendukung ibadah sebagai wujud pelayanan yang nyata.',
-            'en' => 'Responsible for managing the church\'s mercy ministry and social assistance. The Head of the Diaconal Assembly leads the deacons to detect, verify, and respond wisely to the needs of the congregation (widows, orphans, the sick, and those with economic hardship), while also ensuring that the church\'s physical facilities are ready to support worship as a tangible expression of ministry.',
+            'en' => 'Responsible for managing the church\'s mercy ministry and social assistance. The Elder of Mercy Ministry leads the deacons to detect, verify, and respond wisely to the needs of the congregation (widows, orphans, the sick, and those with economic hardship), while also ensuring that the church\'s physical facilities are ready to support worship as a tangible expression of ministry.',
         ],
         'Majelis Bidang Ibadah' => [
             'id' => 'Bertanggung jawab merancang dan mengawasi seluruh tata ibadah (liturgi) agar teologis, tertib, dan berpusat pada Injil. Ketua Bidang Ibadah memastikan bahwa nyanyian, doa, dan sakramen yang dilakukan bukan untuk "menghibur" jemaat, melainkan untuk memuliakan Allah dan membangun iman jemaat melalui sarana anugerah yang benar.',
-            'en' => 'Responsible for designing and overseeing the entire order of worship (liturgy) so that it is theological, orderly, and Gospel-centered. The Head of the Worship Assembly ensures that the songs, prayers, and sacraments carried out are not meant to "entertain" the congregation, but to glorify God and build the faith of the congregation through the proper means of grace.',
+            'en' => 'Responsible for designing and overseeing the entire order of worship (liturgy) so that it is theological, orderly, and Gospel-centered. The Elder of Worship ensures that the songs, prayers, and sacraments carried out are not meant to "entertain" the congregation, but to glorify God and build the faith of the congregation through the proper means of grace.',
         ],
         'Ketua Pengurus Lokal' => [
             'id' => 'Bertanggung jawab memimpin operasional dan penggembalaan di tingkat wilayah/cabang sesuai arahan Majelis Pusat. Ketua Pengurus memastikan bahwa visi besar gereja "mendarat" dan terimplementasi secara kontekstual di wilayahnya, serta menciptakan persekutuan yang hangat di mana setiap jemaat merasa diperhatikan dan bertumbuh.',
-            'en' => 'Responsible for leading operations and shepherding at the regional/branch level in accordance with the direction of the Central Assembly. The Local Branch Chair ensures that the church\'s larger vision "lands" and is implemented contextually in the branch, while also creating a warm fellowship where every congregant feels cared for and grows.',
+            'en' => 'Responsible for leading operations and shepherding at the regional/branch level in accordance with the direction of the central elders. The Leader for Local Branch ensures that the church\'s larger vision "lands" and is implemented contextually in the branch, while also creating a warm fellowship where every congregant feels cared for and grows.',
         ],
     ];
 }
@@ -5480,20 +5491,37 @@ if ($page === 'bidang') {
     $logoutToken = csrf_token();
 
     $infoMessage = '';
+    $infoMessageKey = '';
+    $infoMessageVars = [];
     $info = trim((string)($_GET['info'] ?? ''));
     $infoBidang = trim((string)($_GET['bidang'] ?? ''));
     if ($info === 'sudah-vote' && $infoBidang !== '' && isset($votedBidangMap[$infoBidang])) {
         $infoMessage = 'Anda sudah melakukan vote pada ' . $infoBidang . '. Silakan pilih bidang lainnya.';
+        $infoMessageKey = 'info_already_voted';
+        $infoMessageVars = [
+            'bidang' => $infoBidang,
+            'bidang_en' => bidang_display_title($infoBidang, 'en'),
+        ];
     } elseif ($info === 'vote-berhasil' && $infoBidang !== '' && isset($votedBidangMap[$infoBidang])) {
         $infoMessage = 'Vote untuk ' . $infoBidang . ' berhasil disimpan.';
+        $infoMessageKey = 'info_vote_saved';
+        $infoMessageVars = [
+            'bidang' => $infoBidang,
+            'bidang_en' => bidang_display_title($infoBidang, 'en'),
+        ];
     } elseif ($info === 'admin-only') {
         $infoMessage = 'Halaman dashboard hanya dapat diakses oleh admin.';
+        $infoMessageKey = 'info_admin_only';
     } elseif ($info === 'wawancara-only') {
         $infoMessage = 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.';
+        $infoMessageKey = 'info_interview_only';
     } elseif ($info === 'gembala-local-only') {
         $infoMessage = 'Halaman pantauan cabang hanya dapat diakses oleh gembala lokal.';
+        $infoMessageKey = 'info_branch_only';
     } elseif ($info === 'masa-berakhir') {
         $infoMessage = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
+        $infoMessageKey = 'info_voting_ended';
+        $infoMessageVars = ['date' => ELECTION_DEADLINE_LABEL];
     }
     ?>
     <!doctype html>
@@ -5809,7 +5837,11 @@ if ($page === 'bidang') {
             </div>
 
             <?php if ($infoMessage !== ''): ?>
-                <div class="alert-info"><?= h($infoMessage) ?></div>
+                <div
+                    class="alert-info"
+                    <?= $infoMessageKey !== '' ? 'data-i18n="' . h($infoMessageKey) . '"' : '' ?>
+                    <?= $infoMessageVars !== [] ? 'data-i18n-vars="' . h((string)json_encode($infoMessageVars, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '"' : '' ?>
+                ><?= h($infoMessage) ?></div>
             <?php endif; ?>
 
             <div class="grid">
@@ -5839,7 +5871,11 @@ if ($page === 'bidang') {
                         <?php endif; ?>
                         <p class="picked-candidate<?= $isVoted ? '' : ' empty' ?>">
                             <span class="picked-label" data-i18n="picked_candidate_label">Kandidat terpilih:</span>
-                            <span class="picked-name"><?= h($isVoted ? display_name_text($pickedName) : $pickedName) ?></span>
+                            <span
+                                class="picked-name"
+                                data-lang-text-id="<?= h($isVoted ? display_name_text($pickedName) : $pickedName) ?>"
+                                data-lang-text-en="<?= h($isVoted ? display_name_text($pickedName) : 'Not selected yet') ?>"
+                            ><?= h($isVoted ? display_name_text($pickedName) : $pickedName) ?></span>
                         </p>
                         <?php if ($isVoted): ?>
                             <button class="btn-pilih voted" type="button" disabled data-i18n="bidang_status_voted">Sudah Vote</button>
@@ -5865,6 +5901,12 @@ if ($page === 'bidang') {
             'bidang_status_voted' => ['id' => 'Sudah Vote', 'en' => 'Already Voted'],
             'bidang_status_closed' => ['id' => 'Pemilihan Ditutup', 'en' => 'Voting Closed'],
             'bidang_choose_now' => ['id' => 'Pilih Sekarang', 'en' => 'Choose Now'],
+            'info_already_voted' => ['id' => 'Anda sudah melakukan vote pada {bidang}. Silakan pilih bidang lainnya.', 'en' => 'You have already voted for {bidang_en}. Please choose another position.'],
+            'info_vote_saved' => ['id' => 'Vote untuk {bidang} berhasil disimpan.', 'en' => 'Your vote for {bidang_en} was saved successfully.'],
+            'info_admin_only' => ['id' => 'Halaman dashboard hanya dapat diakses oleh admin.', 'en' => 'The dashboard page can only be accessed by admins.'],
+            'info_interview_only' => ['id' => 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.', 'en' => 'The interview page can only be accessed by admins or interviewers.'],
+            'info_branch_only' => ['id' => 'Halaman pantauan cabang hanya dapat diakses oleh gembala lokal.', 'en' => 'The branch monitoring page can only be accessed by local pastors.'],
+            'info_voting_ended' => ['id' => 'Masa pemilihan sudah berakhir pada {date}.', 'en' => 'The voting period ended on {date}.'],
         ]); ?>
     </body>
     </html>
@@ -7377,8 +7419,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 </div>
 
                 <section class="import-box">
-                    <h2 class="import-title">Import Data User & Kandidat</h2>
-                    <p class="import-note">
+                    <h2 class="import-title" data-i18n="dashboard_import_title">Import Data User & Kandidat</h2>
+                    <p class="import-note" data-i18n-html="dashboard_import_note">
                         Upload file template Excel (.xlsx) dengan 2 sheet: <strong>MASTER PEMILIH</strong> dan <strong>MASTER KANDIDAT</strong>.
                         User import otomatis memakai role <strong>user</strong>, username format nama depan + inisial nama berikutnya, dan password dari 6 digit belakang <strong>Nomor Telpon</strong>.
                         Sheet kandidat juga dapat memakai kolom opsional <strong>TIPE PENCALONAN</strong> dengan nilai <strong>SEMUA</strong>, <strong>SEMUA_KECUALI_KETUA_LOKAL</strong>, atau <strong>KETUA_LOKAL_SAJA</strong>.
@@ -7387,7 +7429,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                         <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
                         <input type="hidden" name="dashboard_action" value="import_excel">
                         <input class="file-input" type="file" name="excel_file" accept=".xlsx" required>
-                        <button class="btn btn-import" type="submit">Import Excel</button>
+                        <button class="btn btn-import" type="submit" data-i18n="dashboard_import_button">Import Excel</button>
                     </form>
 
                     <?php if ($importSuccessMessage !== ''): ?>
@@ -7396,7 +7438,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
 
                     <?php if ($importErrors !== []): ?>
                         <div class="import-alert error">
-                            <strong>Import gagal:</strong>
+                            <strong data-i18n="dashboard_import_failed">Import gagal:</strong>
                             <ul>
                                 <?php foreach ($importErrors as $errorItem): ?>
                                     <li><?= h((string)$errorItem) ?></li>
@@ -7411,14 +7453,14 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                         $warningRemaining = count($importWarnings) - count($warningPreview);
                         ?>
                         <div class="import-alert warning">
-                            <strong>Catatan import:</strong>
+                            <strong data-i18n="dashboard_import_notes">Catatan import:</strong>
                             <ul>
                                 <?php foreach ($warningPreview as $warningItem): ?>
                                     <li><?= h((string)$warningItem) ?></li>
                                 <?php endforeach; ?>
                             </ul>
                             <?php if ($warningRemaining > 0): ?>
-                                <div>... dan <?= h((string)$warningRemaining) ?> catatan lainnya.</div>
+                                <div data-i18n="dashboard_import_more_notes" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$warningRemaining], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">... dan <?= h((string)$warningRemaining) ?> catatan lainnya.</div>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>
@@ -7443,25 +7485,25 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 <?php if ($isDashboardPage): ?>
                 <div class="stats">
                     <article class="stat">
-                        <p class="stat-label">Total Vote Tersimpan</p>
+                        <p class="stat-label" data-i18n="dashboard_stat_votes">Total Vote Tersimpan</p>
                         <p class="stat-value"><?= h((string)$totalVotes) ?></p>
                     </article>
                     <article class="stat">
-                        <p class="stat-label">Total Pemilih Unik</p>
+                        <p class="stat-label" data-i18n="dashboard_stat_voters">Total Pemilih Unik</p>
                         <p class="stat-value"><?= h((string)$totalPemilih) ?></p>
                     </article>
                     <article class="stat">
-                        <p class="stat-label">Bidang Terisi</p>
+                        <p class="stat-label" data-i18n="dashboard_stat_positions">Bidang Terisi</p>
                         <p class="stat-value"><?= h((string)$totalBidangTerisi) ?></p>
                     </article>
                 </div>
 
                 <article class="progress-card">
                     <div class="progress-head">
-                        <h2 class="progress-title">Progress Voting Keseluruhan</h2>
+                        <h2 class="progress-title" data-i18n="dashboard_progress_title">Progress Voting Keseluruhan</h2>
                         <p class="progress-percent"><?= h($progressPercentText) ?>%</p>
                     </div>
-                    <p class="progress-meta">
+                    <p class="progress-meta" data-i18n="dashboard_progress_meta" data-i18n-vars="<?= h((string)json_encode(['completed' => (string)$completedVotes, 'target' => (string)$targetVotes, 'users' => (string)$totalUsers, 'bidang' => (string)$totalBidang], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">
                         <?= h((string)$completedVotes) ?> dari <?= h((string)$targetVotes) ?> vote
                         (<?= h((string)$totalUsers) ?> user x <?= h((string)$totalBidang) ?> bidang)
                     </p>
@@ -7469,18 +7511,18 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                         <div class="progress-fill" style="width: <?= h($progressWidth) ?>%;"></div>
                     </div>
                     <div class="progress-detail">
-                        <div>User sudah vote: <strong><?= h((string)$usersStarted) ?>/<?= h((string)$totalUsers) ?></strong></div>
-                        <div>User tuntas semua bidang: <strong><?= h((string)$usersCompletedAll) ?>/<?= h((string)$totalUsers) ?></strong></div>
+                        <div data-i18n-html="dashboard_progress_users_started" data-i18n-vars="<?= h((string)json_encode(['started' => (string)$usersStarted, 'total' => (string)$totalUsers], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">User sudah vote: <strong><?= h((string)$usersStarted) ?>/<?= h((string)$totalUsers) ?></strong></div>
+                        <div data-i18n-html="dashboard_progress_users_completed" data-i18n-vars="<?= h((string)json_encode(['done' => (string)$usersCompletedAll, 'total' => (string)$totalUsers], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">User tuntas semua bidang: <strong><?= h((string)$usersCompletedAll) ?>/<?= h((string)$totalUsers) ?></strong></div>
                     </div>
                 </article>
                 <?php endif; ?>
 
                 <?php if ($isKandidatPage): ?>
                 <?php if ($bidangSummary === []): ?>
-                    <p class="empty">Belum ada data pemilihan yang tersimpan.</p>
+                    <p class="empty" data-i18n="dashboard_empty_votes">Belum ada data pemilihan yang tersimpan.</p>
                 <?php else: ?>
                     <div class="kandidat-filter-bar">
-                        <p class="kandidat-filter-label">Filter proses kandidat</p>
+                        <p class="kandidat-filter-label" data-i18n="dashboard_candidate_filter_label">Filter proses kandidat</p>
                         <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="dashboard_candidate_filter_label">
                             <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
                             <option value="belum_assign" <?= $kandidatProcessFilter === 'belum_assign' ? 'selected' : '' ?> data-i18n="filter_unassigned">Belum di-assign</option>
@@ -7509,9 +7551,9 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                             <span class="rekap-title-sub"><?= h($rekapCabangTitle) ?></span>
                                         <?php endif; ?>
                                     </h2>
-                                    <p class="rekap-total"><?= h((string)$summary['total']) ?> vote</p>
+                                    <p class="rekap-total" data-i18n="dashboard_rekap_total_votes" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$summary['total']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)$summary['total']) ?> vote</p>
                                 </div>
-                                <p class="top10-title">Top 10 Kandidat</p>
+                                <p class="top10-title" data-i18n="dashboard_top10_title">Top 10 Kandidat</p>
                                 <ul class="candidate-list">
                                     <?php foreach ($summary['top_candidates'] as $index => $candidate): ?>
                                         <?php
@@ -7619,7 +7661,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
-                                                <span class="flag-badge on screening-on">
+                                                <span class="flag-badge on screening-on" data-i18n="filter_screening">
                                                     Lolos Screening
                                                 </span>
                                                 <span class="flag-badge<?= h($candidateScorecardBadgeClass) ?>">
@@ -7636,14 +7678,14 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
-                                                <span class="flag-badge">
+                                                <span class="flag-badge" data-i18n="filter_not_advanced">
                                                     Belum Lanjut Proses
                                                 </span>
                                                 <?php else: ?>
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
-                                                <span class="flag-badge on">
+                                                <span class="flag-badge on" data-i18n="filter_advanced">
                                                     Lanjut Proses
                                                 </span>
                                                 <?php endif; ?>
@@ -7661,7 +7703,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                         onchange="this.form.submit()"
                                                         <?= $interviewerUsers === [] ? 'disabled' : '' ?>
                                                     >
-                                                        <option value="">Belum di-assign</option>
+                                                        <option value="" data-i18n="filter_unassigned">Belum di-assign</option>
                                                         <?php foreach ($interviewerUsers as $interviewerItem): ?>
                                                             <?php
                                                             $interviewerLogin = (string)($interviewerItem['login_username'] ?? '');
@@ -7693,9 +7735,11 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                         name="flag_type"
                                                         value="lanjut"
                                                         <?= $canToggleCandidateLanjutProses ? '' : 'disabled' ?>
+                                                        data-lang-title-id="<?= h(!$canToggleCandidateLanjutProses ? 'Tombol aktif setelah ada minimal 1 form kesediaan.' : ($isLanjutProses ? 'Batalkan status lanjut proses kandidat ini.' : 'Tandai kandidat ini sebagai lanjut proses.')) ?>"
+                                                        data-lang-title-en="<?= h(!$canToggleCandidateLanjutProses ? 'This button becomes active after at least 1 consent form is submitted.' : ($isLanjutProses ? 'Cancel this candidate\\\'s advanced-process status.' : 'Mark this candidate as advanced.')) ?>"
                                                         title="<?= !$canToggleCandidateLanjutProses ? 'Tombol aktif setelah ada minimal 1 form kesediaan.' : ($isLanjutProses ? 'Batalkan status lanjut proses kandidat ini.' : 'Tandai kandidat ini sebagai lanjut proses.') ?>"
                                                     >
-                                                        <?= $isLanjutProses ? 'Batalkan' : 'Lanjut Proses' ?>
+                                                        <span data-lang-text-id="<?= h($isLanjutProses ? 'Batalkan' : 'Lanjut Proses') ?>" data-lang-text-en="<?= h($isLanjutProses ? 'Cancel' : 'Advance') ?>"><?= $isLanjutProses ? 'Batalkan' : 'Lanjut Proses' ?></span>
                                                     </button>
                                                 </form>
                                                 <?php endif; ?>
@@ -7711,20 +7755,22 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                         name="flag_type"
                                                         value="<?= h($screeningActionType) ?>"
                                                         <?= $screeningButtonDisabled ? 'disabled' : '' ?>
+                                                        data-lang-title-id="<?= h($screeningButtonTitle) ?>"
+                                                        data-lang-title-en="<?= h($isScorecardSubmitted ? 'Cancel this candidate\\\'s score card submission status so it can be edited again.' : ($isLolosScreening ? 'Cancel this candidate\\\'s screening status.' : ($isLanjutProses ? 'Mark this candidate as screened.' : 'Advanced-process status is still inactive.'))) ?>"
                                                         title="<?= h($screeningButtonTitle) ?>"
                                                     >
-                                                        <?= h($screeningButtonLabel) ?>
+                                                        <span data-lang-text-id="<?= h($screeningButtonLabel) ?>" data-lang-text-en="<?= h($isScorecardSubmitted ? 'Cancel Score Card Submission' : ($isLolosScreening ? 'Cancel Screening' : 'Mark Screening')) ?>"><?= h($screeningButtonLabel) ?></span>
                                                     </button>
                                                 </form>
                                             </div>
                                             <?php if ($interviewerUsers === []): ?>
-                                                <p class="assign-note">Belum ada user dengan role pewawancara.</p>
+                                                <p class="assign-note" data-i18n="dashboard_no_interviewer_users">Belum ada user dengan role pewawancara.</p>
                                             <?php endif; ?>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
                                 <?php if ((int)($summary['candidate_total'] ?? 0) > 10): ?>
-                                    <p class="top10-note">
+                                    <p class="top10-note" data-i18n="dashboard_top10_note" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$summary['candidate_total']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">
                                         Menampilkan 10 dari <?= h((string)$summary['candidate_total']) ?> kandidat pada bidang ini.
                                     </p>
                                 <?php endif; ?>
@@ -7736,23 +7782,23 @@ if ($page === 'dashboard' || $page === 'kandidat') {
 
                 <?php if ($isDashboardPage): ?>
                 <section class="log-section">
-                    <h2 class="section-title">Log Vote</h2>
+                    <h2 class="section-title" data-i18n="dashboard_log_title">Log Vote</h2>
                     <?php if ($voteLogs === []): ?>
-                        <p class="empty">Belum ada log vote.</p>
+                        <p class="empty" data-i18n="dashboard_log_empty">Belum ada log vote.</p>
                     <?php else: ?>
                         <div class="table-wrap">
                             <table class="log-table">
                                 <thead>
                                     <tr>
-                                        <th>No</th>
-                                        <th>Waktu</th>
-                                        <th>User</th>
-                                        <th>Cabang User</th>
-                                        <th>Bidang</th>
-                                        <th>Kandidat</th>
-                                        <th>Cabang Kandidat</th>
+                                        <th data-i18n="dashboard_log_no">No</th>
+                                        <th data-i18n="dashboard_log_time">Waktu</th>
+                                        <th data-i18n="dashboard_log_user">User</th>
+                                        <th data-i18n="dashboard_log_user_branch">Cabang User</th>
+                                        <th data-i18n="dashboard_log_position">Bidang</th>
+                                        <th data-i18n="dashboard_log_candidate">Kandidat</th>
+                                        <th data-i18n="dashboard_log_candidate_branch">Cabang Kandidat</th>
                                         <th>IP</th>
-                                        <th>Event</th>
+                                        <th data-i18n="dashboard_log_event">Event</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -7864,6 +7910,20 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'dashboard_deadline_meta' => ['id' => 'Batas akhir pemilihan sampai <strong>{date}</strong>.', 'en' => 'Voting is open until <strong>{date}</strong>.'],
             'dashboard_deadline_closed' => ['id' => 'Masa pemilihan berakhir', 'en' => 'Voting period ended'],
             'dashboard_deadline_open' => ['id' => 'Masa pemilihan masih berjalan', 'en' => 'Voting is still open'],
+            'dashboard_import_title' => ['id' => 'Import Data User & Kandidat', 'en' => 'Import User & Candidate Data'],
+            'dashboard_import_note' => ['id' => 'Upload file template Excel (.xlsx) dengan 2 sheet: <strong>MASTER PEMILIH</strong> dan <strong>MASTER KANDIDAT</strong>. User import otomatis memakai role <strong>user</strong>, username format nama depan + inisial nama berikutnya, dan password dari 6 digit belakang <strong>Nomor Telpon</strong>. Sheet kandidat juga dapat memakai kolom opsional <strong>TIPE PENCALONAN</strong> dengan nilai <strong>SEMUA</strong>, <strong>SEMUA_KECUALI_KETUA_LOKAL</strong>, atau <strong>KETUA_LOKAL_SAJA</strong>.', 'en' => 'Upload the Excel template file (.xlsx) with 2 sheets: <strong>MASTER PEMILIH</strong> and <strong>MASTER KANDIDAT</strong>. Imported users automatically use the <strong>user</strong> role, usernames follow the first-name plus following-initial format, and passwords use the last 6 digits of <strong>Nomor Telpon</strong>. The candidate sheet may also use the optional <strong>TIPE PENCALONAN</strong> column with values <strong>SEMUA</strong>, <strong>SEMUA_KECUALI_KETUA_LOKAL</strong>, or <strong>KETUA_LOKAL_SAJA</strong>.'],
+            'dashboard_import_button' => ['id' => 'Import Excel', 'en' => 'Import Excel'],
+            'dashboard_import_failed' => ['id' => 'Import gagal:', 'en' => 'Import failed:'],
+            'dashboard_import_notes' => ['id' => 'Catatan import:', 'en' => 'Import notes:'],
+            'dashboard_import_more_notes' => ['id' => '... dan {count} catatan lainnya.', 'en' => '... and {count} more notes.'],
+            'dashboard_stat_votes' => ['id' => 'Total Vote Tersimpan', 'en' => 'Total Saved Votes'],
+            'dashboard_stat_voters' => ['id' => 'Total Pemilih Unik', 'en' => 'Total Unique Voters'],
+            'dashboard_stat_positions' => ['id' => 'Bidang Terisi', 'en' => 'Filled Positions'],
+            'dashboard_progress_title' => ['id' => 'Progress Voting Keseluruhan', 'en' => 'Overall Voting Progress'],
+            'dashboard_progress_meta' => ['id' => '{completed} dari {target} vote ({users} user x {bidang} bidang)', 'en' => '{completed} of {target} votes ({users} users x {bidang} positions)'],
+            'dashboard_progress_users_started' => ['id' => 'User sudah vote: <strong>{started}/{total}</strong>', 'en' => 'Users who have voted: <strong>{started}/{total}</strong>'],
+            'dashboard_progress_users_completed' => ['id' => 'User tuntas semua bidang: <strong>{done}/{total}</strong>', 'en' => 'Users who completed all positions: <strong>{done}/{total}</strong>'],
+            'dashboard_empty_votes' => ['id' => 'Belum ada data pemilihan yang tersimpan.', 'en' => 'No voting data has been saved yet.'],
             'dashboard_candidate_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
             'filter_all' => ['id' => 'Semua', 'en' => 'All'],
             'filter_unassigned' => ['id' => 'Belum di-assign', 'en' => 'Not assigned'],
@@ -7872,6 +7932,20 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
             'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
             'dashboard_candidate_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
+            'dashboard_rekap_total_votes' => ['id' => '{count} vote', 'en' => '{count} votes'],
+            'dashboard_top10_title' => ['id' => 'Top 10 Kandidat', 'en' => 'Top 10 Candidates'],
+            'dashboard_no_interviewer_users' => ['id' => 'Belum ada user dengan role pewawancara.', 'en' => 'There are no users with the interviewer role yet.'],
+            'dashboard_top10_note' => ['id' => 'Menampilkan 10 dari {count} kandidat pada bidang ini.', 'en' => 'Showing 10 of {count} candidates for this position.'],
+            'dashboard_log_title' => ['id' => 'Log Vote', 'en' => 'Vote Log'],
+            'dashboard_log_empty' => ['id' => 'Belum ada log vote.', 'en' => 'There are no vote logs yet.'],
+            'dashboard_log_no' => ['id' => 'No', 'en' => 'No'],
+            'dashboard_log_time' => ['id' => 'Waktu', 'en' => 'Time'],
+            'dashboard_log_user' => ['id' => 'User', 'en' => 'User'],
+            'dashboard_log_user_branch' => ['id' => 'Cabang User', 'en' => 'User Branch'],
+            'dashboard_log_position' => ['id' => 'Bidang', 'en' => 'Position'],
+            'dashboard_log_candidate' => ['id' => 'Kandidat', 'en' => 'Candidate'],
+            'dashboard_log_candidate_branch' => ['id' => 'Cabang Kandidat', 'en' => 'Candidate Branch'],
+            'dashboard_log_event' => ['id' => 'Event', 'en' => 'Event'],
         ]); ?>
     </body>
     </html>
@@ -9117,10 +9191,10 @@ if ($page === 'wawancara') {
                                             <span class="rekap-title-sub"><?= h($wawancaraCabangTitle) ?></span>
                                         <?php endif; ?>
                                     </h2>
-                                    <p class="rekap-total"><?= h((string)($summary['total'] ?? 0)) ?> vote</p>
+                                    <p class="rekap-total" data-i18n="dashboard_rekap_total_votes" data-i18n-vars="<?= h((string)json_encode(['count' => (string)($summary['total'] ?? 0)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)($summary['total'] ?? 0)) ?> vote</p>
                                 </div>
                                 <?php if ((array)($summary['top_candidates'] ?? []) === []): ?>
-                                    <p class="empty">Belum ada kandidat pada bidang ini.</p>
+                                    <p class="empty" data-i18n="wawancara_empty_candidates">Belum ada kandidat pada bidang ini.</p>
                                 <?php else: ?>
                                     <ul class="candidate-list">
                                         <?php foreach ((array)($summary['top_candidates'] ?? []) as $index => $candidate): ?>
@@ -9150,15 +9224,20 @@ if ($page === 'wawancara') {
                                             }
                                             $wawancaraFormExists = $wawancaraTotalFormCount > 0;
                                             $wawancaraKesediaanBadgeText = 'Belum Bersedia';
+                                            $wawancaraKesediaanBadgeTextEn = 'Not Yet Willing';
                                             $wawancaraKesediaanBadgeClass = ' kesediaan-empty';
                                             if ($wawancaraFormExists) {
                                                 $wawancaraKesediaanBadgeText = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' bersedia';
+                                                $wawancaraKesediaanBadgeTextEn = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' willing';
                                                 $wawancaraKesediaanBadgeClass = $wawancaraBersediaCount >= $wawancaraTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
                                             }
                                             $canInputKesediaanForm = !$isWawancaraLanjut;
                                             $wawancaraFormKesediaanTitle = $canInputKesediaanForm
                                                 ? 'Lihat dokumen sementara kandidat'
                                                 : 'Form kesediaan terkunci karena kandidat sudah lanjut proses';
+                                            $wawancaraFormKesediaanTitleEn = $canInputKesediaanForm
+                                                ? 'View temporary candidate document'
+                                                : 'Consent form is locked because the candidate has already advanced';
                                             $wawancaraLockedPihakUsed = kesediaan_used_single_submit_hubungan($wawancaraCandidateForms);
                                             $wawancaraLockedPihakUsedJsonRaw = json_encode(array_values($wawancaraLockedPihakUsed), JSON_UNESCAPED_UNICODE);
                                             if (!is_string($wawancaraLockedPihakUsedJsonRaw)) {
@@ -9227,23 +9306,23 @@ if ($page === 'wawancara') {
                                                     #<?= h((string)($index + 1)) ?> -
                                                     <?= h_name($wawancaraCandidateName) ?>
                                                     (<?= h($wawancaraCandidateCabang) ?>)
-                                                    - <?= h((string)$wawancaraCandidateCount) ?> suara
+                                                    - <span data-i18n="wawancara_votes_count" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$wawancaraCandidateCount], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)$wawancaraCandidateCount) ?> suara</span>
                                                 </div>
                                                 <div class="flag-state">
                                                     <span class="flag-badge<?= h($wawancaraKesediaanBadgeClass) ?>">
-                                                        <?= h($wawancaraKesediaanBadgeText) ?>
+                                                        <span data-lang-text-id="<?= h($wawancaraKesediaanBadgeText) ?>" data-lang-text-en="<?= h($wawancaraKesediaanBadgeTextEn) ?>"><?= h($wawancaraKesediaanBadgeText) ?></span>
                                                     </span>
                                                     <?php if (!$isWawancaraScreening && $isWawancaraLanjut): ?>
-                                                    <span class="flag-badge<?= $isWawancaraLanjut ? ' on' : '' ?>">
+                                                    <span class="flag-badge<?= $isWawancaraLanjut ? ' on' : '' ?>" data-i18n="<?= h($isWawancaraLanjut ? 'filter_advanced' : 'filter_not_advanced') ?>">
                                                         <?= $isWawancaraLanjut ? 'Lanjut Proses' : 'Belum Lanjut Proses' ?>
                                                     </span>
                                                     <?php endif; ?>
                                                     <?php if ($isWawancaraScreening): ?>
-                                                    <span class="flag-badge on screening-on">
+                                                    <span class="flag-badge on screening-on" data-i18n="filter_screening">
                                                         Lolos Screening
                                                     </span>
                                                     <span class="flag-badge<?= h($wawancaraScorecardBadgeClass) ?>">
-                                                        <?= h($wawancaraScorecardBadgeText) ?>
+                                                        <span data-lang-text-id="<?= h($wawancaraScorecardBadgeText) ?>" data-lang-text-en="<?= h('Final Score: ' . ($wawancaraHasScorecard ? number_format($wawancaraScorecardFinalScore, 2, '.', '') : '0')) ?>"><?= h($wawancaraScorecardBadgeText) ?></span>
                                                     </span>
                                                     <?php endif; ?>
                                                 </div>
@@ -9252,6 +9331,8 @@ if ($page === 'wawancara') {
                                                         <button
                                                             class="doc-icon-btn"
                                                             type="button"
+                                                            data-lang-title-id="<?= h($wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini')) ?>"
+                                                            data-lang-title-en="<?= h($wawancaraScorecardSubmitted ? 'View this candidate\'s score card' : ($wawancaraHasScorecard ? 'Edit this candidate\'s score card' : 'Input this candidate\'s score card')) ?>"
                                                             title="<?= $wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini') ?>"
                                                             data-candidate-bidang="<?= h((string)$bidang) ?>"
                                                             data-candidate-name="<?= h($wawancaraCandidateName) ?>"
@@ -9262,12 +9343,14 @@ if ($page === 'wawancara') {
                                                             onclick="showScoreCardModal(this)"
                                                         >
                                                             <span class="doc-icon" aria-hidden="true">&#128203;</span>
-                                                            <span class="doc-label"><?= $wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card') ?></span>
+                                                            <span class="doc-label" data-lang-text-id="<?= h($wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card')) ?>" data-lang-text-en="<?= h($wawancaraScorecardSubmitted ? 'View Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card')) ?>"><?= $wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card') ?></span>
                                                         </button>
                                                     <?php else: ?>
                                                         <button
                                                             class="doc-icon-btn"
                                                             type="button"
+                                                            data-lang-title-id="<?= h($wawancaraFormKesediaanTitle) ?>"
+                                                            data-lang-title-en="<?= h($wawancaraFormKesediaanTitleEn) ?>"
                                                             title="<?= h($wawancaraFormKesediaanTitle) ?>"
                                                             data-candidate-bidang="<?= h((string)$bidang) ?>"
                                                             data-candidate-name="<?= h($wawancaraCandidateName) ?>"
@@ -9277,12 +9360,14 @@ if ($page === 'wawancara') {
                                                             <?= $canInputKesediaanForm ? '' : 'disabled' ?>
                                                         >
                                                             <span class="doc-icon" aria-hidden="true">&#128196;</span>
-                                                            <span class="doc-label">Form Kesediaan</span>
+                                                            <span class="doc-label" data-i18n="wawancara_form_consent">Form Kesediaan</span>
                                                         </button>
                                                     <?php endif; ?>
                                                     <button
                                                         class="doc-icon-btn secondary"
                                                         type="button"
+                                                        data-lang-title-id="<?= h($wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput') ?>"
+                                                        data-lang-title-en="<?= h($wawancaraFormExists ? 'View submitted consent forms' : 'No consent forms have been submitted yet') ?>"
                                                         title="<?= $wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput' ?>"
                                                         data-candidate-name="<?= h($wawancaraCandidateName) ?>"
                                                         data-form-exists="<?= $wawancaraFormExists ? '1' : '0' ?>"
@@ -9291,14 +9376,14 @@ if ($page === 'wawancara') {
                                                         <?= $wawancaraFormExists ? '' : 'disabled' ?>
                                                     >
                                                         <span class="doc-icon" aria-hidden="true">&#128065;</span>
-                                                        <span class="doc-label">Lihat Form</span>
+                                                        <span class="doc-label" data-i18n="wawancara_view_form">Lihat Form</span>
                                                     </button>
                                                     <?php if ($isWawancaraScreening): ?>
                                                         <form
                                                             class="doc-action-form"
                                                             method="post"
                                                             action="<?= h(app_index_url($wawancaraPageParams)) ?>"
-                                                            onsubmit="return confirm('Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?')"
+                                                            onsubmit="return confirm(window.majelisLang && typeof window.majelisLang.t === 'function' ? window.majelisLang.t('wawancara_submit_confirm', {}, 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?') : 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?')"
                                                         >
                                                             <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
                                                             <input type="hidden" name="wawancara_action" value="submit_scorecard">
@@ -9308,10 +9393,12 @@ if ($page === 'wawancara') {
                                                             <button
                                                                 class="doc-scorecard-submit-btn"
                                                                 type="submit"
+                                                                data-lang-title-id="<?= h($wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.')) ?>"
+                                                                data-lang-title-en="<?= h($wawancaraScorecardSubmitted ? 'This score card has already been submitted.' : ($wawancaraHasScorecard ? 'Submit this candidate\'s score card.' : 'Fill in the score card before submitting.')) ?>"
                                                                 title="<?= $wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.') ?>"
                                                                 <?= (!$wawancaraHasScorecard || $wawancaraScorecardSubmitted) ? 'disabled' : '' ?>
                                                             >
-                                                                <?= $wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card' ?>
+                                                                <span data-lang-text-id="<?= h($wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card') ?>" data-lang-text-en="<?= h($wawancaraScorecardSubmitted ? 'Submitted' : 'Submit Score Card') ?>"><?= $wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card' ?></span>
                                                             </button>
                                                         </form>
                                                     <?php endif; ?>
@@ -9328,8 +9415,8 @@ if ($page === 'wawancara') {
         </main>
         <div class="doc-modal" id="candidateDocModal" role="dialog" aria-modal="true" aria-labelledby="candidate-doc-title">
             <div class="doc-modal-panel">
-                <h2 class="doc-modal-title" id="candidate-doc-title">Form Kesediaan</h2>
-                <p class="doc-modal-text">Kandidat: <strong id="candidateDocName">-</strong></p>
+                <h2 class="doc-modal-title" id="candidate-doc-title" data-i18n="wawancara_consent_title">Form Kesediaan</h2>
+                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_doc_label">Kandidat: <strong id="candidateDocName">-</strong></p>
                 <form class="doc-modal-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" enctype="multipart/form-data" id="candidateDocForm">
                     <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
                     <input type="hidden" name="wawancara_action" value="save_kesediaan_form">
@@ -9338,9 +9425,9 @@ if ($page === 'wawancara') {
                     <input type="hidden" name="target_kandidat_cabang" id="candidateDocCabang" value="">
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="hubungan">Pihak yang Menyatakan Kesediaan</label>
+                        <label class="doc-field-label" for="hubungan" data-i18n="wawancara_consent_party_label">Pihak yang Menyatakan Kesediaan</label>
                         <select class="doc-field-select" id="hubungan" name="hubungan" required>
-                            <option value="">Pilih pihak</option>
+                            <option value="" data-i18n="wawancara_select_party">Pilih pihak</option>
                             <?php foreach (kesediaan_hubungan_options() as $hubunganOption): ?>
                                 <option value="<?= h($hubunganOption) ?>"><?= h($hubunganOption) ?></option>
                             <?php endforeach; ?>
@@ -9348,13 +9435,14 @@ if ($page === 'wawancara') {
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="nama_pihak">Nama Lengkap Pihak</label>
+                        <label class="doc-field-label" for="nama_pihak" data-i18n="wawancara_party_name_label">Nama Lengkap Pihak</label>
                         <input
                             class="doc-field-input name-display-uppercase"
                             type="text"
                             id="nama_pihak"
                             name="nama_pihak"
                             placeholder="Pilih pihak terlebih dahulu"
+                            data-i18n-placeholder="wawancara_party_name_placeholder_select"
                             maxlength="120"
                             required
                             disabled
@@ -9362,77 +9450,78 @@ if ($page === 'wawancara') {
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="kesediaan_file">Bukti Foto Pertemuan</label>
+                        <label class="doc-field-label" for="kesediaan_file" data-i18n="wawancara_meeting_photo_label">Bukti Foto Pertemuan</label>
                         <input class="doc-field-input" type="file" id="kesediaan_file" name="kesediaan_file" accept="image/*" required>
                     </div>
 
                     <div class="doc-field">
-                        <span class="doc-field-label">Kesediaan</span>
+                        <span class="doc-field-label" data-i18n="wawancara_willingness_label">Kesediaan</span>
                         <div class="doc-check-group">
                             <label class="doc-check-item">
                                 <input type="radio" name="status_kesediaan" value="bersedia" required>
-                                Bersedia
+                                <span data-i18n="wawancara_willing">Bersedia</span>
                             </label>
                             <label class="doc-check-item">
                                 <input type="radio" name="status_kesediaan" value="tidak_bersedia" required>
-                                Tidak Bersedia
+                                <span data-i18n="wawancara_not_willing">Tidak Bersedia</span>
                             </label>
                         </div>
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="kesediaan_alasan">Alasan (Opsional)</label>
+                        <label class="doc-field-label" for="kesediaan_alasan" data-i18n="wawancara_reason_optional">Alasan (Opsional)</label>
                         <textarea
                             class="doc-field-textarea"
                             id="kesediaan_alasan"
                             name="alasan"
                             rows="3"
                             placeholder="Tambahkan alasan jika diperlukan"
+                            data-i18n-placeholder="wawancara_reason_placeholder"
                             maxlength="2000"
                         ></textarea>
                     </div>
 
                     <div class="doc-modal-actions">
-                        <button class="doc-modal-close" type="button" onclick="closeTemporaryCandidatePopup()">Batal</button>
-                        <button class="doc-modal-submit" type="submit">Simpan</button>
+                        <button class="doc-modal-close" type="button" onclick="closeTemporaryCandidatePopup()" data-i18n="wawancara_cancel">Batal</button>
+                        <button class="doc-modal-submit" type="submit" data-i18n="wawancara_save">Simpan</button>
                     </div>
                 </form>
             </div>
         </div>
         <div class="doc-modal" id="candidateViewModal" role="dialog" aria-modal="true" aria-labelledby="candidate-view-title">
             <div class="doc-modal-panel view">
-                <h2 class="doc-modal-title" id="candidate-view-title">Lihat Form Kesediaan</h2>
-                <p class="doc-modal-text">Kandidat: <strong id="candidateViewName">-</strong></p>
+                <h2 class="doc-modal-title" id="candidate-view-title" data-i18n="wawancara_view_consent_title">Lihat Form Kesediaan</h2>
+                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_view_label">Kandidat: <strong id="candidateViewName">-</strong></p>
                 <div id="candidateViewRecap" class="doc-view-recap" style="display:none;">
-                    <p class="doc-view-recap-title">Rekap Pengisi Form</p>
+                    <p class="doc-view-recap-title" data-i18n="wawancara_consent_recap_title">Rekap Pengisi Form</p>
                     <div class="doc-view-recap-table-wrap">
                         <table class="doc-view-recap-table">
                             <thead>
                                 <tr>
-                                    <th>No</th>
-                                    <th>Pihak</th>
-                                    <th>Nama Pihak</th>
-                                    <th>Status</th>
-                                    <th>Alasan</th>
-                                    <th>Dokumen</th>
-                                    <th>Waktu Simpan</th>
+                                    <th data-i18n="dashboard_log_no">No</th>
+                                    <th data-i18n="wawancara_party">Pihak</th>
+                                    <th data-i18n="wawancara_party_name">Nama Pihak</th>
+                                    <th data-i18n="gembala_table_status">Status</th>
+                                    <th data-i18n="wawancara_reason">Alasan</th>
+                                    <th data-i18n="wawancara_document">Dokumen</th>
+                                    <th data-i18n="wawancara_saved_at">Waktu Simpan</th>
                                 </tr>
                             </thead>
                             <tbody id="candidateViewRecapBody"></tbody>
                         </table>
                     </div>
                 </div>
-                <div id="candidateViewEmpty" class="doc-view-empty">Belum ada form kesediaan yang disimpan untuk kandidat ini.</div>
+                <div id="candidateViewEmpty" class="doc-view-empty" data-i18n="wawancara_view_empty">Belum ada form kesediaan yang disimpan untuk kandidat ini.</div>
                 <div class="doc-modal-actions">
-                    <button class="doc-modal-close" type="button" onclick="closeExistingKesediaanFormModal()">Tutup</button>
+                    <button class="doc-modal-close" type="button" onclick="closeExistingKesediaanFormModal()" data-i18n="wawancara_close">Tutup</button>
                 </div>
             </div>
         </div>
         <div class="doc-modal" id="candidateScoreCardModal" role="dialog" aria-modal="true" aria-labelledby="candidate-scorecard-title">
             <div class="doc-modal-panel scorecard">
-                <h2 class="doc-modal-title" id="candidate-scorecard-title">Input Score Card</h2>
-                <p class="doc-modal-text">Kandidat: <strong id="candidateScoreCardName">-</strong></p>
-                <p class="doc-modal-text">Bidang: <strong id="candidateScoreCardBidangName">-</strong></p>
+                <h2 class="doc-modal-title" id="candidate-scorecard-title" data-i18n="wawancara_input_scorecard">Input Score Card</h2>
+                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_scorecard_label">Kandidat: <strong id="candidateScoreCardName">-</strong></p>
+                <p class="doc-modal-text" data-i18n-html="wawancara_position_label">Bidang: <strong id="candidateScoreCardBidangName">-</strong></p>
                 <form class="doc-modal-form scorecard-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" id="candidateScoreCardForm">
                     <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
                     <input type="hidden" name="wawancara_action" value="save_scorecard">
@@ -9441,7 +9530,7 @@ if ($page === 'wawancara') {
                     <input type="hidden" name="target_kandidat_cabang" id="candidateScoreCardCabangInput" value="">
 
                     <div class="scorecard-scale-box">
-                        <p class="scorecard-scale-title">Skala Penilaian</p>
+                        <p class="scorecard-scale-title" data-i18n="wawancara_score_scale_title">Skala Penilaian</p>
                         <ul class="scorecard-scale-list">
                             <li><strong>1</strong> = Sangat Kurang. Ada red flag signifikan dan tidak direkomendasikan.</li>
                             <li><strong>3</strong> = Cukup/Memenuhi Syarat. Memenuhi standar dasar namun jawaban masih umum.</li>
@@ -9449,15 +9538,15 @@ if ($page === 'wawancara') {
                         </ul>
                     </div>
 
-                    <div id="candidateScoreCardTemplateState" class="scorecard-template-state scorecard-hidden">Template score card belum tersedia untuk bidang ini.</div>
+                    <div id="candidateScoreCardTemplateState" class="scorecard-template-state scorecard-hidden" data-i18n="wawancara_scorecard_template_missing">Template score card belum tersedia untuk bidang ini.</div>
 
                     <div class="scorecard-meta-grid">
                         <div class="doc-field">
-                            <label class="doc-field-label" for="scorecardInterviewDate">Tanggal Wawancara</label>
+                            <label class="doc-field-label" for="scorecardInterviewDate" data-i18n="wawancara_interview_date">Tanggal Wawancara</label>
                             <input class="doc-field-input" type="date" id="scorecardInterviewDate" name="scorecard_interview_date" required>
                         </div>
                         <div class="doc-field">
-                            <label class="doc-field-label" for="scorecardLocation">Lokasi</label>
+                            <label class="doc-field-label" for="scorecardLocation" data-i18n="wawancara_location">Lokasi</label>
                             <input class="doc-field-input" type="text" id="scorecardLocation" name="scorecard_location" maxlength="180" required>
                         </div>
                     </div>
@@ -9466,43 +9555,43 @@ if ($page === 'wawancara') {
 
                     <div class="scorecard-final-grid">
                         <div class="scorecard-final-card highlight">
-                            <span class="scorecard-final-label">Total Score Akhir</span>
+                            <span class="scorecard-final-label" data-i18n="wawancara_final_score">Total Score Akhir</span>
                             <strong class="scorecard-final-value" id="candidateScoreCardFinalScore">0.00</strong>
                         </div>
                         <div class="scorecard-final-card highlight">
-                            <span class="scorecard-final-label">Hasil Otomatis</span>
-                            <strong class="scorecard-final-value" id="candidateScoreCardRecommendation">Lengkapi semua skor</strong>
+                            <span class="scorecard-final-label" data-i18n="wawancara_auto_result">Hasil Otomatis</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardRecommendation" data-i18n="wawancara_complete_scores">Lengkapi semua skor</strong>
                         </div>
                         <div class="scorecard-final-card">
                             <span class="scorecard-final-label">Template</span>
                             <strong class="scorecard-final-value" id="candidateScoreCardTemplateTitle">-</strong>
                         </div>
                         <div class="scorecard-final-card">
-                            <span class="scorecard-final-label">Terakhir Disimpan</span>
-                            <strong class="scorecard-final-value" id="candidateScoreCardUpdatedAt">Belum pernah disimpan</strong>
+                            <span class="scorecard-final-label" data-i18n="wawancara_last_saved">Terakhir Disimpan</span>
+                            <strong class="scorecard-final-value" id="candidateScoreCardUpdatedAt" data-i18n="wawancara_never_saved">Belum pernah disimpan</strong>
                         </div>
                     </div>
 
                     <div class="scorecard-ranges">
-                        <p class="scorecard-range-title">Kriteria Total Score Akhir</p>
+                        <p class="scorecard-range-title" data-i18n="wawancara_score_criteria">Kriteria Total Score Akhir</p>
                         <ul class="scorecard-range-list" id="candidateScoreCardRangeList"></ul>
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="candidateScoreCardDecision">Keputusan Pewawancara</label>
+                        <label class="doc-field-label" for="candidateScoreCardDecision" data-i18n="wawancara_interviewer_decision">Keputusan Pewawancara</label>
                         <select class="doc-field-select" id="candidateScoreCardDecision" name="scorecard_interviewer_decision" required></select>
                     </div>
 
                     <div class="doc-field">
-                        <label class="doc-field-label" for="candidateScoreCardDecisionNote">Catatan Keputusan</label>
-                        <textarea class="doc-field-textarea" id="candidateScoreCardDecisionNote" name="scorecard_decision_note" rows="3" placeholder="Isi catatan jika diperlukan"></textarea>
+                        <label class="doc-field-label" for="candidateScoreCardDecisionNote" data-i18n="wawancara_decision_note">Catatan Keputusan</label>
+                        <textarea class="doc-field-textarea" id="candidateScoreCardDecisionNote" name="scorecard_decision_note" rows="3" placeholder="Isi catatan jika diperlukan" data-i18n-placeholder="wawancara_decision_note_placeholder"></textarea>
                     </div>
 
-                    <p class="scorecard-save-note">Nilai bobot dan hasil akhir dihitung otomatis berdasarkan skor tiap pertanyaan.</p>
+                    <p class="scorecard-save-note" data-i18n="wawancara_scorecard_note">Nilai bobot dan hasil akhir dihitung otomatis berdasarkan skor tiap pertanyaan.</p>
 
                     <div class="doc-modal-actions">
-                        <button class="doc-modal-close" type="button" onclick="closeScoreCardModal()">Tutup</button>
-                        <button class="doc-modal-submit" type="submit" id="candidateScoreCardSubmit">Simpan Score Card</button>
+                        <button class="doc-modal-close" type="button" onclick="closeScoreCardModal()" data-i18n="wawancara_close">Tutup</button>
+                        <button class="doc-modal-submit" type="submit" id="candidateScoreCardSubmit" data-i18n="wawancara_save_scorecard">Simpan Score Card</button>
                     </div>
                 </form>
             </div>
@@ -9548,6 +9637,13 @@ if ($page === 'wawancara') {
             let activeScoreCardTemplate = null;
             let activeScoreCardReadOnly = false;
 
+            function t(key, fallback, vars) {
+                if (window.majelisLang && typeof window.majelisLang.t === 'function') {
+                    return window.majelisLang.t(key, vars || {}, fallback || '');
+                }
+                return fallback || '';
+            }
+
             function displayNameText(value) {
                 const raw = String(value || '').trim();
                 if (raw === '') {
@@ -9589,13 +9685,13 @@ if ($page === 'wawancara') {
                     candidateDocNamaPihakInput.value = '';
                     candidateDocNamaPihakInput.disabled = true;
                     candidateDocNamaPihakInput.readOnly = false;
-                    candidateDocNamaPihakInput.placeholder = 'Pilih pihak terlebih dahulu';
+                    candidateDocNamaPihakInput.placeholder = t('wawancara_party_name_placeholder_select', 'Pilih pihak terlebih dahulu');
                     candidateDocNamaPihakInput.dataset.autofilled = '0';
                     return;
                 }
 
                 candidateDocNamaPihakInput.disabled = false;
-                candidateDocNamaPihakInput.placeholder = 'Masukkan nama lengkap';
+                candidateDocNamaPihakInput.placeholder = t('wawancara_party_name_placeholder_input', 'Masukkan nama lengkap');
                 if (selectedPihak === 'Diri Sendiri (Kandidat)') {
                     candidateDocNamaPihakInput.value = kandidatName;
                     candidateDocNamaPihakInput.readOnly = true;
@@ -9736,7 +9832,7 @@ if ($page === 'wawancara') {
                         if (recapFileUrl !== '' || recapDownloadUrl !== '') {
                             const actionLinks = [];
                             if (recapFileUrl !== '') {
-                                actionLinks.push('<a class=\"doc-view-link\" href=\"' + escapeHtml(recapFileUrl) + '\" target=\"_blank\" rel=\"noopener\">Lihat</a>');
+                                actionLinks.push('<a class=\"doc-view-link\" href=\"' + escapeHtml(recapFileUrl) + '\" target=\"_blank\" rel=\"noopener\">' + escapeHtml(t('wawancara_view', 'Lihat')) + '</a>');
                             }
                             if (recapDownloadUrl !== '') {
                                 actionLinks.push('<a class=\"doc-view-link\" href=\"' + escapeHtml(recapDownloadUrl) + '\" target=\"_blank\" rel=\"noopener\">Unduh</a>');
@@ -9757,7 +9853,7 @@ if ($page === 'wawancara') {
                         );
                     });
                     if (recapRows.length === 0) {
-                        recapRows.push('<tr><td colspan=\"7\">Belum ada data form kesediaan.</td></tr>');
+                        recapRows.push('<tr><td colspan=\"7\">' + escapeHtml(t('wawancara_no_consent_data', 'Belum ada data form kesediaan.')) + '</td></tr>');
                     }
                     candidateViewRecapBody.innerHTML = recapRows.join('');
                     candidateViewRecap.style.display = 'block';
@@ -9864,7 +9960,7 @@ if ($page === 'wawancara') {
                 }
 
                 const options = template && Array.isArray(template.decision_options) ? template.decision_options : [];
-                const rows = ['<option value="">Pilih keputusan</option>'];
+                const rows = ['<option value="">' + escapeHtml(t('wawancara_choose_decision', 'Pilih keputusan')) + '</option>'];
                 options.forEach(function (option) {
                     const value = String(option || '').trim();
                     if (value === '') {
@@ -9976,7 +10072,9 @@ if ($page === 'wawancara') {
                 const selectedDecision = String(candidateScoreCardDecision.value || '').trim().toLowerCase();
                 const requiresNote = selectedDecision.indexOf('catatan') !== -1;
                 candidateScoreCardDecisionNote.required = requiresNote;
-                candidateScoreCardDecisionNote.placeholder = requiresNote ? 'Catatan wajib diisi untuk keputusan ini' : 'Isi catatan jika diperlukan';
+                candidateScoreCardDecisionNote.placeholder = requiresNote
+                    ? t('wawancara_decision_note_required', 'Catatan wajib diisi untuk keputusan ini')
+                    : t('wawancara_decision_note_placeholder', 'Isi catatan jika diperlukan');
             }
 
             function setScoreCardFormReadOnly(readOnly, isSubmitted, hasSubmission) {
@@ -9984,11 +10082,11 @@ if ($page === 'wawancara') {
 
                 if (candidateScoreCardTitle) {
                     if (activeScoreCardReadOnly) {
-                        candidateScoreCardTitle.textContent = 'Lihat Score Card';
+                        candidateScoreCardTitle.textContent = t('wawancara_view_scorecard', 'Lihat Score Card');
                     } else if (hasSubmission) {
-                        candidateScoreCardTitle.textContent = 'Edit Score Card';
+                        candidateScoreCardTitle.textContent = t('wawancara_edit_scorecard', 'Edit Score Card');
                     } else {
-                        candidateScoreCardTitle.textContent = 'Input Score Card';
+                        candidateScoreCardTitle.textContent = t('wawancara_input_scorecard', 'Input Score Card');
                     }
                 }
 
@@ -10002,17 +10100,17 @@ if ($page === 'wawancara') {
                 if (candidateScoreCardSubmit) {
                     candidateScoreCardSubmit.disabled = activeScoreCardReadOnly;
                     candidateScoreCardSubmit.style.display = activeScoreCardReadOnly ? 'none' : '';
-                    candidateScoreCardSubmit.textContent = hasSubmission ? 'Simpan Perubahan' : 'Simpan Score Card';
+                    candidateScoreCardSubmit.textContent = hasSubmission ? t('wawancara_save_changes', 'Simpan Perubahan') : t('wawancara_save_scorecard', 'Simpan Score Card');
                 }
 
                 if (candidateScoreCardTemplateState) {
                     if (activeScoreCardReadOnly) {
                         candidateScoreCardTemplateState.textContent = isSubmitted
-                            ? 'Score card sudah disubmit dan hanya dapat dilihat.'
-                            : 'Score card hanya dapat dilihat.';
+                            ? t('wawancara_scorecard_readonly_submitted', 'Score card sudah disubmit dan hanya dapat dilihat.')
+                            : t('wawancara_scorecard_readonly', 'Score card hanya dapat dilihat.');
                         candidateScoreCardTemplateState.classList.remove('scorecard-hidden', 'error');
                     } else {
-                        candidateScoreCardTemplateState.textContent = 'Template score card belum tersedia untuk bidang ini.';
+                        candidateScoreCardTemplateState.textContent = t('wawancara_scorecard_template_missing', 'Template score card belum tersedia untuk bidang ini.');
                         candidateScoreCardTemplateState.classList.add('scorecard-hidden');
                         candidateScoreCardTemplateState.classList.remove('error');
                     }
@@ -10082,7 +10180,7 @@ if ($page === 'wawancara') {
                 if (candidateScoreCardRecommendation) {
                     candidateScoreCardRecommendation.textContent = allAnswered
                         ? (getScoreCardRecommendation(activeScoreCardTemplate, roundedFinal) || '-')
-                        : 'Lengkapi semua skor';
+                        : t('wawancara_complete_scores', 'Lengkapi semua skor');
                 }
                 renderScoreCardRanges(activeScoreCardTemplate, roundedFinal, allAnswered);
             }
@@ -10103,16 +10201,16 @@ if ($page === 'wawancara') {
                     candidateScoreCardTemplateTitle.textContent = '-';
                 }
                 if (candidateScoreCardUpdatedAt) {
-                    candidateScoreCardUpdatedAt.textContent = 'Belum pernah disimpan';
+                    candidateScoreCardUpdatedAt.textContent = t('wawancara_never_saved', 'Belum pernah disimpan');
                 }
                 if (candidateScoreCardFinalScore) {
                     candidateScoreCardFinalScore.textContent = '0.00';
                 }
                 if (candidateScoreCardRecommendation) {
-                    candidateScoreCardRecommendation.textContent = 'Lengkapi semua skor';
+                    candidateScoreCardRecommendation.textContent = t('wawancara_complete_scores', 'Lengkapi semua skor');
                 }
                 if (candidateScoreCardDecision) {
-                    candidateScoreCardDecision.innerHTML = '<option value="">Pilih keputusan</option>';
+                    candidateScoreCardDecision.innerHTML = '<option value="">' + escapeHtml(t('wawancara_choose_decision', 'Pilih keputusan')) + '</option>';
                 }
                 if (candidateScoreCardDecisionNote) {
                     candidateScoreCardDecisionNote.value = '';
@@ -10153,12 +10251,12 @@ if ($page === 'wawancara') {
                     candidateScoreCardBidangName.textContent = candidateBidang !== '' ? candidateBidang : '-';
                 }
                 if (candidateScoreCardTitle) {
-                    candidateScoreCardTitle.textContent = isReadOnly ? 'Lihat Score Card' : (hasSubmission ? 'Edit Score Card' : 'Input Score Card');
+                    candidateScoreCardTitle.textContent = isReadOnly ? t('wawancara_view_scorecard', 'Lihat Score Card') : (hasSubmission ? t('wawancara_edit_scorecard', 'Edit Score Card') : t('wawancara_input_scorecard', 'Input Score Card'));
                 }
 
                 if (!template || !Array.isArray(template.sections) || template.sections.length === 0) {
                     if (candidateScoreCardTemplateState) {
-                        candidateScoreCardTemplateState.textContent = 'Template score card belum tersedia untuk bidang ini.';
+                        candidateScoreCardTemplateState.textContent = t('wawancara_scorecard_template_missing', 'Template score card belum tersedia untuk bidang ini.');
                         candidateScoreCardTemplateState.classList.remove('scorecard-hidden');
                         candidateScoreCardTemplateState.classList.add('error');
                     }
@@ -10182,7 +10280,7 @@ if ($page === 'wawancara') {
                 }
                 if (candidateScoreCardUpdatedAt) {
                     const updatedAt = String(submission && submission.updated_at ? submission.updated_at : '').trim();
-                    candidateScoreCardUpdatedAt.textContent = updatedAt !== '' ? updatedAt : 'Belum pernah disimpan';
+                    candidateScoreCardUpdatedAt.textContent = updatedAt !== '' ? updatedAt : t('wawancara_never_saved', 'Belum pernah disimpan');
                 }
 
                 renderScoreCardDecisionOptions(template, String(submission && submission.interviewer_decision ? submission.interviewer_decision : ''));
@@ -10372,6 +10470,63 @@ if ($page === 'wawancara') {
             'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
             'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
             'wawancara_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
+            'wawancara_empty_candidates' => ['id' => 'Belum ada kandidat pada bidang ini.', 'en' => 'There are no candidates for this position yet.'],
+            'wawancara_votes_count' => ['id' => '{count} suara', 'en' => '{count} votes'],
+            'wawancara_form_consent' => ['id' => 'Form Kesediaan', 'en' => 'Consent Form'],
+            'wawancara_view_form' => ['id' => 'Lihat Form', 'en' => 'View Form'],
+            'wawancara_submit_confirm' => ['id' => 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?', 'en' => 'After submission, the score card cannot be changed anymore. Continue?'],
+            'wawancara_consent_title' => ['id' => 'Form Kesediaan', 'en' => 'Consent Form'],
+            'wawancara_candidate_doc_label' => ['id' => 'Kandidat: <strong id="candidateDocName">-</strong>', 'en' => 'Candidate: <strong id="candidateDocName">-</strong>'],
+            'wawancara_candidate_view_label' => ['id' => 'Kandidat: <strong id="candidateViewName">-</strong>', 'en' => 'Candidate: <strong id="candidateViewName">-</strong>'],
+            'wawancara_candidate_scorecard_label' => ['id' => 'Kandidat: <strong id="candidateScoreCardName">-</strong>', 'en' => 'Candidate: <strong id="candidateScoreCardName">-</strong>'],
+            'wawancara_position_label' => ['id' => 'Bidang: <strong id="candidateScoreCardBidangName">-</strong>', 'en' => 'Position: <strong id="candidateScoreCardBidangName">-</strong>'],
+            'wawancara_consent_party_label' => ['id' => 'Pihak yang Menyatakan Kesediaan', 'en' => 'Party Declaring Willingness'],
+            'wawancara_select_party' => ['id' => 'Pilih pihak', 'en' => 'Choose party'],
+            'wawancara_party_name_label' => ['id' => 'Nama Lengkap Pihak', 'en' => 'Party Full Name'],
+            'wawancara_party_name_placeholder_select' => ['id' => 'Pilih pihak terlebih dahulu', 'en' => 'Choose a party first'],
+            'wawancara_party_name_placeholder_input' => ['id' => 'Masukkan nama lengkap', 'en' => 'Enter full name'],
+            'wawancara_meeting_photo_label' => ['id' => 'Bukti Foto Pertemuan', 'en' => 'Meeting Photo Evidence'],
+            'wawancara_willingness_label' => ['id' => 'Kesediaan', 'en' => 'Willingness'],
+            'wawancara_willing' => ['id' => 'Bersedia', 'en' => 'Willing'],
+            'wawancara_not_willing' => ['id' => 'Tidak Bersedia', 'en' => 'Not Willing'],
+            'wawancara_reason_optional' => ['id' => 'Alasan (Opsional)', 'en' => 'Reason (Optional)'],
+            'wawancara_reason_placeholder' => ['id' => 'Tambahkan alasan jika diperlukan', 'en' => 'Add a reason if needed'],
+            'wawancara_cancel' => ['id' => 'Batal', 'en' => 'Cancel'],
+            'wawancara_save' => ['id' => 'Simpan', 'en' => 'Save'],
+            'wawancara_view_consent_title' => ['id' => 'Lihat Form Kesediaan', 'en' => 'View Consent Form'],
+            'wawancara_consent_recap_title' => ['id' => 'Rekap Pengisi Form', 'en' => 'Form Submitter Recap'],
+            'wawancara_party' => ['id' => 'Pihak', 'en' => 'Party'],
+            'wawancara_party_name' => ['id' => 'Nama Pihak', 'en' => 'Party Name'],
+            'wawancara_reason' => ['id' => 'Alasan', 'en' => 'Reason'],
+            'wawancara_document' => ['id' => 'Dokumen', 'en' => 'Document'],
+            'wawancara_saved_at' => ['id' => 'Waktu Simpan', 'en' => 'Saved At'],
+            'wawancara_view_empty' => ['id' => 'Belum ada form kesediaan yang disimpan untuk kandidat ini.', 'en' => 'There are no saved consent forms for this candidate yet.'],
+            'wawancara_close' => ['id' => 'Tutup', 'en' => 'Close'],
+            'wawancara_input_scorecard' => ['id' => 'Input Score Card', 'en' => 'Input Score Card'],
+            'wawancara_score_scale_title' => ['id' => 'Skala Penilaian', 'en' => 'Scoring Scale'],
+            'wawancara_scorecard_template_missing' => ['id' => 'Template score card belum tersedia untuk bidang ini.', 'en' => 'The score card template is not available for this position yet.'],
+            'wawancara_interview_date' => ['id' => 'Tanggal Wawancara', 'en' => 'Interview Date'],
+            'wawancara_location' => ['id' => 'Lokasi', 'en' => 'Location'],
+            'wawancara_final_score' => ['id' => 'Total Score Akhir', 'en' => 'Final Total Score'],
+            'wawancara_auto_result' => ['id' => 'Hasil Otomatis', 'en' => 'Automatic Result'],
+            'wawancara_complete_scores' => ['id' => 'Lengkapi semua skor', 'en' => 'Complete all scores'],
+            'wawancara_last_saved' => ['id' => 'Terakhir Disimpan', 'en' => 'Last Saved'],
+            'wawancara_never_saved' => ['id' => 'Belum pernah disimpan', 'en' => 'Never saved'],
+            'wawancara_score_criteria' => ['id' => 'Kriteria Total Score Akhir', 'en' => 'Final Total Score Criteria'],
+            'wawancara_interviewer_decision' => ['id' => 'Keputusan Pewawancara', 'en' => 'Interviewer Decision'],
+            'wawancara_decision_note' => ['id' => 'Catatan Keputusan', 'en' => 'Decision Note'],
+            'wawancara_decision_note_placeholder' => ['id' => 'Isi catatan jika diperlukan', 'en' => 'Fill in a note if needed'],
+            'wawancara_decision_note_required' => ['id' => 'Catatan wajib diisi untuk keputusan ini', 'en' => 'A note is required for this decision'],
+            'wawancara_scorecard_note' => ['id' => 'Nilai bobot dan hasil akhir dihitung otomatis berdasarkan skor tiap pertanyaan.', 'en' => 'Weighted values and final results are calculated automatically based on each question score.'],
+            'wawancara_save_scorecard' => ['id' => 'Simpan Score Card', 'en' => 'Save Score Card'],
+            'wawancara_view' => ['id' => 'Lihat', 'en' => 'View'],
+            'wawancara_no_consent_data' => ['id' => 'Belum ada data form kesediaan.', 'en' => 'There is no consent form data yet.'],
+            'wawancara_choose_decision' => ['id' => 'Pilih keputusan', 'en' => 'Choose decision'],
+            'wawancara_view_scorecard' => ['id' => 'Lihat Score Card', 'en' => 'View Score Card'],
+            'wawancara_edit_scorecard' => ['id' => 'Edit Score Card', 'en' => 'Edit Score Card'],
+            'wawancara_save_changes' => ['id' => 'Simpan Perubahan', 'en' => 'Save Changes'],
+            'wawancara_scorecard_readonly_submitted' => ['id' => 'Score card sudah disubmit dan hanya dapat dilihat.', 'en' => 'This score card has been submitted and can only be viewed.'],
+            'wawancara_scorecard_readonly' => ['id' => 'Score card hanya dapat dilihat.', 'en' => 'This score card can only be viewed.'],
         ]); ?>
     </body>
     </html>
@@ -11546,7 +11701,7 @@ if ($page !== 'login') {
         'welcome_title' => ['id' => '<strong>Shalom REC Indonesia!</strong>', 'en' => '<strong>Shalom REC Indonesia!</strong>'],
         'welcome_text' => [
             'id' => 'Terima kasih atas partisipasi Anda dalam pemilihan kandidat Majelis REC Indonesia periode 2026-2029. Suara Anda adalah wujud kasih yang nyata bagi pembangunan Tubuh Kristus. Mari nyatakan kehendak-Nya melalui pilihan Anda hari ini. Selamat memilih dengan sukacita!',
-            'en' => 'Thank you for your participation in the election of REC Indonesia Assembly candidates for the 2026-2029 term. Your vote is a tangible expression of love for building the Body of Christ. Let us express His will through your choice today. Vote with joy.'
+            'en' => 'Thank you for your participation in the election of REC Indonesia elder candidates for the 2026-2029 term. Your vote is a tangible expression of love for building the Body of Christ. Let us express His will through your choice today. Vote with joy.'
         ],
     ]); ?>
 </body>
