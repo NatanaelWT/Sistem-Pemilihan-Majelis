@@ -5288,6 +5288,24 @@ function user_vote_detail_map(string $username): array
     return $result;
 }
 
+function has_user_completed_all_votes(string $username, string $asalCabang): bool
+{
+    if ($username === '' || $asalCabang === '') {
+        return false;
+    }
+
+    $bidangList = personalize_bidang_list_for_cabang(load_bidang_data(), $asalCabang);
+    $totalBidang = count($bidangList);
+    if ($totalBidang === 0) {
+        return false;
+    }
+
+    $votedMap = user_voted_bidang_map($username);
+    $votedCount = count($votedMap);
+
+    return $votedCount >= $totalBidang;
+}
+
 $page = route_page();
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $error = '';
@@ -5342,6 +5360,25 @@ if ($page === 'login' && $method === 'POST') {
                 if ($electionClosed && $foundRole !== 'admin') {
                     register_failed_login($loginSelectedUsername, $clientIp);
                     $error = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
+                } elseif ($foundRole === 'user') {
+                    // Cek apakah user biasa sudah menyelesaikan vote semua bidang.
+                    $foundNamaLengkap = normalize_username((string)($foundUser['nama_lengkap'] ?? $foundUser['username'] ?? ''));
+                    $foundCabang = trim((string)($foundUser['asal_cabang'] ?? ''));
+                    if (has_user_completed_all_votes($foundNamaLengkap, $foundCabang)) {
+                        $error = 'Anda sudah menyelesaikan seluruh proses pemilihan. Terima kasih atas partisipasi Anda!';
+                    } else {
+                        clear_login_rate_record($loginSelectedUsername, $clientIp);
+                        session_regenerate_id(true);
+                        $_SESSION['logged_in'] = true;
+                        $_SESSION['username'] = $foundNamaLengkap;
+                        $_SESSION['login_username'] = normalize_login_username((string)($foundUser['username'] ?? ''));
+                        $_SESSION['asal_cabang'] = $foundCabang;
+                        sync_session_roles($foundUser);
+                        $_SESSION['user_auth_key'] = hash('sha256', normalize_password((string)($foundUser['password'] ?? '')));
+                        $_SESSION['fingerprint'] = auth_fingerprint();
+                        $_SESSION['csrf_token'] = random_hex(32);
+                        redirect_to_page('bidang');
+                    }
                 } else {
                     clear_login_rate_record($loginSelectedUsername, $clientIp);
                     session_regenerate_id(true);
