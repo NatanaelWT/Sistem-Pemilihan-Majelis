@@ -23,7 +23,7 @@ const LOGIN_MAX_ATTEMPTS_PER_IP = 25;
 const LOGIN_WINDOW_SECONDS = 15 * 60;
 const LOGIN_BLOCK_SECONDS = 15 * 60;
 
-const ELECTION_DEADLINE_END = '2026-03-29 23:59:59';
+const ELECTION_DEADLINE_END = '2026-03-29 16:59:59';
 const ELECTION_DEADLINE_LABEL = '29 Maret 2026';
 
 function is_https_request(): bool
@@ -3036,6 +3036,17 @@ function flagging_candidate_key(string $bidang, string $kandidatNama, string $ka
     return hash('sha256', implode('|', $parts));
 }
 
+function kesediaan_candidate_key(string $kandidatNama, string $kandidatCabang): string
+{
+    $parts = [
+        'kesediaan',
+        normalize_header_key($kandidatNama),
+        normalize_header_key($kandidatCabang),
+    ];
+
+    return hash('sha256', implode('|', $parts));
+}
+
 function load_flagging_data(): array
 {
     $empty = ['flags' => []];
@@ -3677,10 +3688,7 @@ function load_kesediaan_form_data(): array
             continue;
         }
 
-        $key = trim((string)($item['key'] ?? ''));
-        if ($key === '') {
-            $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
-        }
+        $key = kesediaan_candidate_key($kandidatNama, $kandidatCabang);
 
         $normalized[] = [
             'key' => $key,
@@ -3840,7 +3848,7 @@ function save_kesediaan_form_submission(
         return ['ok' => false, 'message' => 'Status kesediaan wajib dipilih.'];
     }
 
-    $key = flagging_candidate_key($bidang, $kandidatNama, $kandidatCabang);
+    $key = kesediaan_candidate_key($kandidatNama, $kandidatCabang);
     $map = load_kesediaan_form_map();
     if (!isset($map[$key]) || !is_array($map[$key])) {
         $map[$key] = [];
@@ -5357,7 +5365,7 @@ if ($page === 'login' && $method === 'POST') {
             } else {
                 $foundRole = primary_role_from_record($foundUser);
 
-                if ($electionClosed && $foundRole !== 'admin') {
+                if ($electionClosed && !in_array($foundRole, ['admin', 'pewawancara', 'gembala_lokal'], true)) {
                     register_failed_login($loginSelectedUsername, $clientIp);
                     $error = 'Masa pemilihan sudah berakhir pada ' . ELECTION_DEADLINE_LABEL . '.';
                 } elseif ($foundRole === 'user') {
@@ -5418,26 +5426,6 @@ if ($page === 'kesediaan_file') {
     if ($formRecord === null) {
         http_response_code(404);
         exit('404 - File tidak ditemukan.');
-    }
-
-    if (user_has_role($authUser, 'pewawancara') && !user_has_role($authUser, 'admin')) {
-        $currentLogin = normalize_login_username((string)($authUser['login_username'] ?? ''));
-        $formKey = trim((string)($formRecord['key'] ?? ''));
-        if ($formKey === '') {
-            $formKey = flagging_candidate_key(
-                (string)($formRecord['bidang'] ?? ''),
-                (string)($formRecord['kandidat_nama'] ?? ''),
-                (string)($formRecord['kandidat_cabang'] ?? '')
-            );
-        }
-
-        $assignmentMap = load_wawancara_assignment_map();
-        $assignmentRecord = (array)($assignmentMap[$formKey] ?? []);
-        $assignedLogin = normalize_login_username((string)($assignmentRecord['interviewer_login_username'] ?? ''));
-        if ($currentLogin === '' || $assignedLogin === '' || !hash_equals($assignedLogin, $currentLogin)) {
-            http_response_code(403);
-            exit('403 - Akses ditolak.');
-        }
     }
 
     $storedPath = trim((string)($formRecord['file_path'] ?? ''));
@@ -6412,7 +6400,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     $asalCabang = trim((string)$authUser['asal_cabang']);
     $isDashboardPage = $page === 'dashboard';
     $isKandidatPage = $page === 'kandidat';
-    $kandidatAllowedProcessFilters = ['all', 'belum_assign', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
+    $kandidatAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
     $kandidatProcessFilter = normalize_query_choice((string)($_GET['kandidat_filter'] ?? ''), $kandidatAllowedProcessFilters, 'all');
     $kandidatPageParams = ['page' => 'kandidat'];
     if ($kandidatProcessFilter !== 'all') {
@@ -6430,8 +6418,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     $importWarnings = [];
     $flaggingSuccessMessage = '';
     $flaggingErrorMessage = '';
-    $assignmentSuccessMessage = '';
-    $assignmentErrorMessage = '';
 
     if ($method === 'POST' && $dashboardAction === 'import_excel') {
         $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
@@ -6683,7 +6669,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 $candidateFlag = (array)($candidateFlagMap[$candidateKey] ?? []);
                 $isCurrentlyLanjut = !empty($candidateFlag['lanjut_proses']);
                 $candidateKesediaanMap = load_kesediaan_form_map();
-                $candidateForms = (array)($candidateKesediaanMap[$candidateKey] ?? []);
+                $candidateKesediaanKey = kesediaan_candidate_key($targetKandidatNama, $targetKandidatCabang);
+                $candidateForms = (array)($candidateKesediaanMap[$candidateKesediaanKey] ?? []);
                 $candidateFormCount = 0;
                 foreach ($candidateForms as $candidateFormItem) {
                     if (!is_array($candidateFormItem)) {
@@ -6743,56 +6730,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
         }
     }
 
-    if ($method === 'POST' && $dashboardAction === 'assign_interviewer') {
-        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
-        $targetBidang = trim((string)($_POST['target_bidang'] ?? ''));
-        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
-        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
-        $selectedInterviewerLogin = normalize_login_username((string)($_POST['interviewer_login_username'] ?? ''));
-
-        if (!is_valid_csrf_token($postedCsrfToken)) {
-            $assignmentErrorMessage = 'Sesi tidak valid. Muat ulang halaman kandidat lalu coba lagi.';
-        } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
-            $assignmentErrorMessage = 'Data kandidat untuk assignment tidak lengkap.';
-        } elseif (!is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
-            $assignmentErrorMessage = 'Assignment hanya dapat dilakukan pada kandidat Top 10 di bidang terkait.';
-        } elseif ($selectedInterviewerLogin !== '' && !isset($interviewerMapByLogin[$selectedInterviewerLogin])) {
-            $assignmentErrorMessage = 'User pewawancara yang dipilih tidak valid.';
-        } else {
-            $interviewerNamaLengkap = '';
-            $interviewerAsalCabang = '';
-            if ($selectedInterviewerLogin !== '') {
-                $interviewerUser = find_interviewer_user_by_login_username($allUsers, $selectedInterviewerLogin);
-                if ($interviewerUser === null) {
-                    $assignmentErrorMessage = 'User pewawancara yang dipilih tidak ditemukan.';
-                } else {
-                    $interviewerNamaLengkap = (string)($interviewerUser['nama_lengkap'] ?? '');
-                    $interviewerAsalCabang = (string)($interviewerUser['asal_cabang'] ?? '');
-                }
-            }
-
-            if ($assignmentErrorMessage === '') {
-                $assignmentResult = set_candidate_interviewer_assignment(
-                    $targetBidang,
-                    $targetKandidatNama,
-                    $targetKandidatCabang,
-                    $selectedInterviewerLogin,
-                    $interviewerNamaLengkap,
-                    $interviewerAsalCabang,
-                    $username
-                );
-
-                if (!($assignmentResult['ok'] ?? false)) {
-                    $assignmentErrorMessage = (string)($assignmentResult['message'] ?? 'Assignment pewawancara gagal disimpan.');
-                } else {
-                    $assignmentSuccessMessage = (string)($assignmentResult['message'] ?? 'Assignment pewawancara berhasil diperbarui.');
-                }
-            }
-        }
-    }
-
     $flaggingMap = load_flagging_map();
-    $interviewerAssignmentMap = load_wawancara_assignment_map();
     $scorecardSubmissionMap = load_scorecard_submission_map();
     $kesediaanFormMap = load_kesediaan_form_map();
 
@@ -7511,12 +7449,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 <?php if ($flaggingErrorMessage !== ''): ?>
                     <div class="import-alert error"><?= h($flaggingErrorMessage) ?></div>
                 <?php endif; ?>
-                <?php if ($assignmentSuccessMessage !== ''): ?>
-                    <div class="import-alert success"><?= h($assignmentSuccessMessage) ?></div>
-                <?php endif; ?>
-                <?php if ($assignmentErrorMessage !== ''): ?>
-                    <div class="import-alert error"><?= h($assignmentErrorMessage) ?></div>
-                <?php endif; ?>
                 <?php endif; ?>
 
                 <?php if ($isDashboardPage): ?>
@@ -7562,7 +7494,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                         <p class="kandidat-filter-label" data-i18n="dashboard_candidate_filter_label">Filter proses kandidat</p>
                         <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="dashboard_candidate_filter_label">
                             <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
-                            <option value="belum_assign" <?= $kandidatProcessFilter === 'belum_assign' ? 'selected' : '' ?> data-i18n="filter_unassigned">Belum di-assign</option>
                             <option value="belum_lanjut" <?= $kandidatProcessFilter === 'belum_lanjut' ? 'selected' : '' ?> data-i18n="filter_not_advanced">Belum Lanjut Proses</option>
                             <option value="lanjut" <?= $kandidatProcessFilter === 'lanjut' ? 'selected' : '' ?> data-i18n="filter_advanced">Lanjut Proses</option>
                             <option value="screening" <?= $kandidatProcessFilter === 'screening' ? 'selected' : '' ?> data-i18n="filter_screening">Lolos Screening</option>
@@ -7602,36 +7533,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         $candidateFlag = (array)($flaggingMap[$candidateFlagKey] ?? []);
                                         $isLanjutProses = !empty($candidateFlag['lanjut_proses']);
                                         $isLolosScreening = !empty($candidateFlag['lolos_screening']) && $isLanjutProses;
-                                        $candidateAssignment = (array)($interviewerAssignmentMap[$candidateFlagKey] ?? []);
-                                        $assignedInterviewerLogin = normalize_login_username((string)($candidateAssignment['interviewer_login_username'] ?? ''));
-                                        $assignedInterviewerLabel = '';
-                                        if ($assignedInterviewerLogin !== '' && isset($interviewerMapByLogin[$assignedInterviewerLogin])) {
-                                            $assignedInfo = (array)$interviewerMapByLogin[$assignedInterviewerLogin];
-                                            $assignedInterviewerName = trim((string)($assignedInfo['nama_lengkap'] ?? ''));
-                                            $assignedInterviewerLabel = $assignedInterviewerName !== ''
-                                                ? display_name_text($assignedInterviewerName)
-                                                : $assignedInterviewerLogin;
-                                            $assignedInterviewerCabang = trim((string)($assignedInfo['asal_cabang'] ?? ''));
-                                            if ($assignedInterviewerCabang !== '') {
-                                                $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
-                                            }
-                                        } else {
-                                            $assignedInterviewerName = normalize_username((string)($candidateAssignment['interviewer_nama_lengkap'] ?? ''));
-                                            $assignedInterviewerCabang = trim((string)($candidateAssignment['interviewer_asal_cabang'] ?? ''));
-                                            if ($assignedInterviewerName !== '') {
-                                                $assignedInterviewerLabel = display_name_text($assignedInterviewerName);
-                                                if ($assignedInterviewerCabang !== '') {
-                                                    $assignedInterviewerLabel .= ' (' . $assignedInterviewerCabang . ')';
-                                                }
-                                            } elseif ($assignedInterviewerLogin !== '') {
-                                                $assignedInterviewerLabel = $assignedInterviewerLogin;
-                                            }
-                                        }
-                                        $assignedInterviewerStatusText = $assignedInterviewerLogin !== '' ? 'Sudah di-assign' : 'Belum di-assign';
-                                        $assignedInterviewerTitleText = $assignedInterviewerLogin !== '' && $assignedInterviewerLabel !== ''
-                                            ? 'Pewawancara: ' . $assignedInterviewerLabel
-                                            : '';
-                                        $candidateForms = (array)($kesediaanFormMap[$candidateFlagKey] ?? []);
+                                        $candidateKesediaanKey = kesediaan_candidate_key($candidateNama, $candidateCabang);
+                                        $candidateForms = (array)($kesediaanFormMap[$candidateKesediaanKey] ?? []);
                                         $candidateTotalFormCount = 0;
                                         $candidateBersediaCount = 0;
                                         foreach ($candidateForms as $candidateFormItemRaw) {
@@ -7682,7 +7585,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         <li
                                             class="candidate-item"
                                             id="<?= h($candidateAnchorId) ?>"
-                                            data-process-assigned="<?= $assignedInterviewerLogin !== '' ? '1' : '0' ?>"
                                             data-process-lanjut="<?= $isLanjutProses ? '1' : '0' ?>"
                                             data-process-screening="<?= $isLolosScreening ? '1' : '0' ?>"
                                             data-process-scorecard-submitted="<?= $isScorecardSubmitted ? '1' : '0' ?>"
@@ -7704,13 +7606,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <span class="flag-badge<?= h($candidateScorecardBadgeClass) ?>">
                                                     <?= h($candidateScorecardBadgeText) ?>
                                                 </span>
-                                                <?php elseif ($assignedInterviewerLogin === ''): ?>
-                                                <span
-                                                    class="flag-badge"
-                                                    <?= $assignedInterviewerTitleText !== '' ? 'title="' . h($assignedInterviewerTitleText) . '"' : '' ?>
-                                                >
-                                                    <?= h($assignedInterviewerStatusText) ?>
-                                                </span>
                                                 <?php elseif (!$isLanjutProses): ?>
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
@@ -7728,37 +7623,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <?php endif; ?>
                                             </div>
                                             <div class="candidate-actions">
-                                                <form class="assign-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
-                                                    <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
-                                                    <input type="hidden" name="dashboard_action" value="assign_interviewer">
-                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
-                                                    <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
-                                                    <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
-                                                    <select
-                                                        class="assign-select"
-                                                        name="interviewer_login_username"
-                                                        onchange="this.form.submit()"
-                                                        <?= $interviewerUsers === [] ? 'disabled' : '' ?>
-                                                    >
-                                                        <option value="" data-i18n="filter_unassigned">Belum di-assign</option>
-                                                        <?php foreach ($interviewerUsers as $interviewerItem): ?>
-                                                            <?php
-                                                            $interviewerLogin = (string)($interviewerItem['login_username'] ?? '');
-                                                            $interviewerName = trim((string)($interviewerItem['nama_lengkap'] ?? ''));
-                                                            $interviewerLabel = $interviewerName !== ''
-                                                                ? display_name_text($interviewerName)
-                                                                : $interviewerLogin;
-                                                            $interviewerCabang = trim((string)($interviewerItem['asal_cabang'] ?? ''));
-                                                            if ($interviewerCabang !== '') {
-                                                                $interviewerLabel .= ' (' . $interviewerCabang . ')';
-                                                            }
-                                                            ?>
-                                                            <option value="<?= h($interviewerLogin) ?>" <?= $assignedInterviewerLogin === $interviewerLogin ? 'selected' : '' ?>>
-                                                                <?= h($interviewerLabel) ?>
-                                                            </option>
-                                                        <?php endforeach; ?>
-                                                    </select>
-                                                </form>
                                                 <?php if (!$isLolosScreening): ?>
                                                 <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
                                                     <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
@@ -7800,9 +7664,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                     </button>
                                                 </form>
                                             </div>
-                                            <?php if ($interviewerUsers === []): ?>
-                                                <p class="assign-note" data-i18n="dashboard_no_interviewer_users">Belum ada user dengan role pewawancara.</p>
-                                            <?php endif; ?>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
@@ -7889,16 +7750,13 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 let visibleCandidateCount = 0;
 
                 candidateItems.forEach(function (item) {
-                    const isAssigned = item.getAttribute('data-process-assigned') === '1';
                     const isLanjut = item.getAttribute('data-process-lanjut') === '1';
                     const isScreening = item.getAttribute('data-process-screening') === '1';
                     const isScorecardSubmitted = item.getAttribute('data-process-scorecard-submitted') === '1';
                     let shouldShow = true;
 
-                    if (selectedFilter === 'belum_assign') {
-                        shouldShow = !isAssigned;
-                    } else if (selectedFilter === 'belum_lanjut') {
-                        shouldShow = isAssigned && !isLanjut;
+                    if (selectedFilter === 'belum_lanjut') {
+                        shouldShow = !isLanjut;
                     } else if (selectedFilter === 'lanjut') {
                         shouldShow = isLanjut && !isScreening;
                     } else if (selectedFilter === 'screening') {
@@ -7963,7 +7821,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'dashboard_empty_votes' => ['id' => 'Belum ada data pemilihan yang tersimpan.', 'en' => 'No voting data has been saved yet.'],
             'dashboard_candidate_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
             'filter_all' => ['id' => 'Semua', 'en' => 'All'],
-            'filter_unassigned' => ['id' => 'Belum di-assign', 'en' => 'Not assigned'],
             'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
             'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
             'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
@@ -7971,7 +7828,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'dashboard_candidate_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
             'dashboard_rekap_total_votes' => ['id' => '{count} vote', 'en' => '{count} votes'],
             'dashboard_top10_title' => ['id' => 'Top 10 Kandidat', 'en' => 'Top 10 Candidates'],
-            'dashboard_no_interviewer_users' => ['id' => 'Belum ada user dengan role pewawancara.', 'en' => 'There are no users with the interviewer role yet.'],
             'dashboard_top10_note' => ['id' => 'Menampilkan 10 dari {count} kandidat pada bidang ini.', 'en' => 'Showing 10 of {count} candidates for this position.'],
             'dashboard_log_title' => ['id' => 'Log Vote', 'en' => 'Vote Log'],
             'dashboard_log_empty' => ['id' => 'Belum ada log vote.', 'en' => 'There are no vote logs yet.'],
@@ -8000,8 +7856,6 @@ if ($page === 'wawancara') {
         redirect_to_page('bidang', ['info' => 'wawancara-only']);
     }
 
-    $isPewawancara = user_has_role($authUser, 'pewawancara') && !user_has_role($authUser, 'admin');
-    $wawancaraLoginUsername = normalize_login_username((string)($authUser['login_username'] ?? ''));
     $wawancaraAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
     $wawancaraProcessFilter = normalize_query_choice((string)($_GET['wawancara_filter'] ?? ''), $wawancaraAllowedProcessFilters, 'all');
     $wawancaraPageParams = ['page' => 'wawancara'];
@@ -8019,12 +7873,9 @@ if ($page === 'wawancara') {
         $wawancaraVoteItems = [];
     }
     $wawancaraFlagMap = load_flagging_map();
-    $wawancaraAssignmentMap = load_wawancara_assignment_map();
     $wawancaraKesediaanFormMap = load_kesediaan_form_map();
     $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
-    $wawancaraEmptyMessage = $isPewawancara
-        ? 'Belum ada kandidat Top 10 yang di-assign ke Anda.'
-        : 'Belum ada kandidat Top 10 yang di-assign ke pewawancara.';
+    $wawancaraEmptyMessage = 'Belum ada kandidat Top 10 untuk ditampilkan.';
 
     $wawancaraBidangSummary = [];
     foreach ($wawancaraVoteItems as $voteItem) {
@@ -8075,36 +7926,9 @@ if ($page === 'wawancara') {
         });
         $sortedCandidates = array_values($summary['candidates']);
         $topCandidates = array_slice($sortedCandidates, 0, 10);
-        $assignedTopCandidates = [];
-        foreach ($topCandidates as $candidate) {
-            if (!is_array($candidate)) {
-                continue;
-            }
-
-            $candidateNama = trim((string)($candidate['nama'] ?? ''));
-            $candidateCabang = trim((string)($candidate['cabang'] ?? ''));
-            if ($candidateNama === '' || $candidateCabang === '') {
-                continue;
-            }
-
-            $flagKey = flagging_candidate_key((string)$bidang, $candidateNama, $candidateCabang);
-            $assignment = (array)($wawancaraAssignmentMap[$flagKey] ?? []);
-            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
-            if ($assignedInterviewerLogin === '') {
-                continue;
-            }
-            if ($isPewawancara) {
-                if ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername)) {
-                    continue;
-                }
-            }
-
-            $assignedTopCandidates[] = $candidate;
-        }
-
         $wawancaraBidangSummary[$bidang]['candidates'] = $sortedCandidates;
         $wawancaraBidangSummary[$bidang]['candidate_total'] = count($sortedCandidates);
-        $wawancaraBidangSummary[$bidang]['top_candidates'] = $assignedTopCandidates;
+        $wawancaraBidangSummary[$bidang]['top_candidates'] = $topCandidates;
     }
 
     $orderedWawancaraBidangSummary = [];
@@ -8203,23 +8027,12 @@ if ($page === 'wawancara') {
             $wawancaraErrorMessage = 'Bukti foto pertemuan wajib diupload.';
         } else {
             $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
-            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
-            $assignedInterviewerName = normalize_username((string)($assignment['interviewer_nama_lengkap'] ?? ''));
             $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
             $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
 
-            if ($assignedInterviewerLogin === '') {
-                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
-            } elseif ($isCandidateLanjutProses) {
+            if ($isCandidateLanjutProses) {
                 $wawancaraErrorMessage = 'Kandidat ini sudah lanjut proses. Form kesediaan tidak dapat diinput lagi.';
-            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
-                $wawancaraErrorMessage = 'Anda tidak memiliki akses form kesediaan untuk kandidat ini.';
             } else {
-                if ($assignedInterviewerName === '') {
-                    $assignedInterviewerName = (string)$authUser['username'];
-                }
-
                 $saveResult = save_kesediaan_form_submission(
                     $targetBidang,
                     $targetKandidatNama,
@@ -8229,8 +8042,8 @@ if ($page === 'wawancara') {
                     $statusKesediaan,
                     $alasan,
                     $uploadedFile,
-                    $assignedInterviewerLogin,
-                    $assignedInterviewerName,
+                    (string)($authUser['login_username'] ?? ''),
+                    (string)($authUser['username'] ?? ''),
                     (string)$authUser['username']
                 );
 
@@ -8264,18 +8077,12 @@ if ($page === 'wawancara') {
             $wawancaraErrorMessage = 'Data score card tidak valid.';
         } else {
             $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
-            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
             $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
             $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
             $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
 
-            if ($assignedInterviewerLogin === '') {
-                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
-            } elseif (!$isCandidateLolosScreening) {
+            if (!$isCandidateLolosScreening) {
                 $wawancaraErrorMessage = 'Score card hanya dapat diisi untuk kandidat yang sudah lolos screening.';
-            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
-                $wawancaraErrorMessage = 'Anda tidak memiliki akses score card untuk kandidat ini.';
             } else {
                 $saveResult = save_scorecard_submission(
                     $targetBidang,
@@ -8314,18 +8121,12 @@ if ($page === 'wawancara') {
             $wawancaraErrorMessage = 'Data kandidat tidak valid untuk submit score card.';
         } else {
             $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-            $assignment = (array)($wawancaraAssignmentMap[$candidateKey] ?? []);
-            $assignedInterviewerLogin = normalize_login_username((string)($assignment['interviewer_login_username'] ?? ''));
             $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
             $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
             $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
 
-            if ($assignedInterviewerLogin === '') {
-                $wawancaraErrorMessage = 'Kandidat ini belum di-assign ke pewawancara.';
-            } elseif (!$isCandidateLolosScreening) {
+            if (!$isCandidateLolosScreening) {
                 $wawancaraErrorMessage = 'Submit score card hanya dapat dilakukan untuk kandidat yang sudah lolos screening.';
-            } elseif ($isPewawancara && ($wawancaraLoginUsername === '' || !hash_equals($assignedInterviewerLogin, $wawancaraLoginUsername))) {
-                $wawancaraErrorMessage = 'Anda tidak memiliki akses score card untuk kandidat ini.';
             } else {
                 $submitResult = submit_scorecard_submission(
                     $targetBidang,
@@ -9243,7 +9044,8 @@ if ($page === 'wawancara') {
                                             $wawancaraCandidateFlag = (array)($wawancaraFlagMap[$wawancaraCandidateKey] ?? []);
                                             $isWawancaraLanjut = !empty($wawancaraCandidateFlag['lanjut_proses']);
                                             $isWawancaraScreening = !empty($wawancaraCandidateFlag['lolos_screening']) && $isWawancaraLanjut;
-                                            $wawancaraCandidateForms = (array)($wawancaraKesediaanFormMap[$wawancaraCandidateKey] ?? []);
+                                            $wawancaraKesediaanKey = kesediaan_candidate_key($wawancaraCandidateName, $wawancaraCandidateCabang);
+                                            $wawancaraCandidateForms = (array)($wawancaraKesediaanFormMap[$wawancaraKesediaanKey] ?? []);
                                             $wawancaraTotalFormCount = 0;
                                             $wawancaraBersediaCount = 0;
                                             foreach ($wawancaraCandidateForms as $wawancaraKesediaanItemRaw) {
