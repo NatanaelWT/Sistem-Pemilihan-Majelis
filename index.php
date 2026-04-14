@@ -23,8 +23,14 @@ const LOGIN_MAX_ATTEMPTS_PER_IP = 25;
 const LOGIN_WINDOW_SECONDS = 15 * 60;
 const LOGIN_BLOCK_SECONDS = 15 * 60;
 
+const APP_DEFAULT_TIMEZONE = 'Asia/Jakarta';
+
 const ELECTION_DEADLINE_END = '2026-03-29 16:59:59';
 const ELECTION_DEADLINE_LABEL = '29 Maret 2026';
+
+$GLOBALS['MAJELIS_LEGACY_DEFAULT_TIMEZONE'] = date_default_timezone_get();
+date_default_timezone_set(APP_DEFAULT_TIMEZONE);
+@ini_set('date.timezone', APP_DEFAULT_TIMEZONE);
 
 function is_https_request(): bool
 {
@@ -841,6 +847,282 @@ function write_json_file_atomic(string $path, array $payload): bool
     return true;
 }
 
+function legacy_default_timezone(): string
+{
+    $timezone = trim((string)($GLOBALS['MAJELIS_LEGACY_DEFAULT_TIMEZONE'] ?? ''));
+    if ($timezone === '') {
+        return 'UTC';
+    }
+    return $timezone;
+}
+
+function is_valid_timezone_name(string $timezone): bool
+{
+    $timezone = trim($timezone);
+    if ($timezone === '') {
+        return false;
+    }
+
+    try {
+        new DateTimeZone($timezone);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function parse_timezone_migration_datetime(string $value, DateTimeZone $timezone): ?DateTimeImmutable
+{
+    $value = trim($value);
+    if ($value === '') {
+        return null;
+    }
+
+    $date = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, $timezone);
+    $errors = DateTimeImmutable::getLastErrors();
+    $hasErrors = is_array($errors)
+        && (((int)($errors['warning_count'] ?? 0)) > 0 || ((int)($errors['error_count'] ?? 0)) > 0);
+    if (!($date instanceof DateTimeImmutable) || $hasErrors) {
+        return null;
+    }
+
+    return $date;
+}
+
+function convert_datetime_timezone_value(string $value, string $sourceTimezone, string $targetTimezone): string
+{
+    $value = trim($value);
+    if ($value === '' || $sourceTimezone === $targetTimezone) {
+        return $value;
+    }
+
+    try {
+        $source = new DateTimeZone($sourceTimezone);
+        $target = new DateTimeZone($targetTimezone);
+    } catch (Throwable $e) {
+        return $value;
+    }
+
+    $date = parse_timezone_migration_datetime($value, $source);
+    if (!($date instanceof DateTimeImmutable)) {
+        return $value;
+    }
+
+    return $date->setTimezone($target)->format('Y-m-d H:i:s');
+}
+
+function timezone_migration_definitions(): array
+{
+    return [
+        [
+            'filename' => 'pemilihan.json',
+            'collection_key' => 'pemilihan',
+            'fields' => ['waktu_pemilihan'],
+        ],
+        [
+            'filename' => 'vote_log.json',
+            'collection_key' => 'logs',
+            'fields' => ['timestamp'],
+        ],
+        [
+            'filename' => 'flagging.json',
+            'collection_key' => 'flags',
+            'fields' => ['updated_at'],
+        ],
+        [
+            'filename' => 'wawancara_assignment.json',
+            'collection_key' => 'assignments',
+            'fields' => ['updated_at'],
+        ],
+        [
+            'filename' => 'kesediaan_form.json',
+            'collection_key' => 'forms',
+            'fields' => ['updated_at'],
+        ],
+        [
+            'filename' => 'scorecard_submissions.json',
+            'collection_key' => 'submissions',
+            'fields' => ['submitted_at', 'updated_at'],
+        ],
+    ];
+}
+
+function migrate_payload_timestamps(
+    array $payload,
+    string $collectionKey,
+    array $fields,
+    string $sourceTimezone,
+    string $targetTimezone
+): array {
+    $items = $payload[$collectionKey] ?? null;
+    if (!is_array($items)) {
+        return [
+            'payload' => $payload,
+            'changed' => false,
+            'records_changed' => 0,
+        ];
+    }
+
+    $changed = false;
+    $recordsChanged = 0;
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $recordChanged = false;
+        foreach ($fields as $field) {
+            $originalValue = trim((string)($item[$field] ?? ''));
+            if ($originalValue === '') {
+                continue;
+            }
+
+            $convertedValue = convert_datetime_timezone_value($originalValue, $sourceTimezone, $targetTimezone);
+            if ($convertedValue === $originalValue) {
+                continue;
+            }
+
+            $payload[$collectionKey][$index][$field] = $convertedValue;
+            $recordChanged = true;
+            $changed = true;
+        }
+
+        if ($recordChanged) {
+            $recordsChanged++;
+        }
+    }
+
+    return [
+        'payload' => $payload,
+        'changed' => $changed,
+        'records_changed' => $recordsChanged,
+    ];
+}
+
+function restore_timezone_migration_backup(array $writtenPaths, array $backupMap): void
+{
+    foreach ($writtenPaths as $writtenPath) {
+        $backupPath = $backupMap[$writtenPath] ?? '';
+        if (!is_string($backupPath) || $backupPath === '' || !is_file($backupPath)) {
+            continue;
+        }
+
+        @copy($backupPath, $writtenPath);
+        @chmod($writtenPath, 0600);
+    }
+}
+
+function run_timezone_data_migration(string $dir): void
+{
+    static $processed = [];
+    if (isset($processed[$dir])) {
+        return;
+    }
+    $processed[$dir] = true;
+
+    $markerPath = $dir . '/timezone_migration.json';
+    if (is_file($markerPath)) {
+        return;
+    }
+
+    $sourceTimezone = legacy_default_timezone();
+    $targetTimezone = APP_DEFAULT_TIMEZONE;
+    $markerPayload = [
+        'status' => 'pending',
+        'source_timezone' => $sourceTimezone,
+        'target_timezone' => $targetTimezone,
+        'processed_at' => date('Y-m-d H:i:s', current_time()),
+        'backup_dir' => '',
+        'files' => [],
+    ];
+
+    if (!is_valid_timezone_name($sourceTimezone) || !is_valid_timezone_name($targetTimezone)) {
+        $markerPayload['status'] = 'skipped_invalid_timezone';
+        write_json_file_atomic($markerPath, $markerPayload);
+        return;
+    }
+
+    if ($sourceTimezone === $targetTimezone) {
+        $markerPayload['status'] = 'skipped_same_timezone';
+        write_json_file_atomic($markerPath, $markerPayload);
+        return;
+    }
+
+    $pendingWrites = [];
+    foreach (timezone_migration_definitions() as $definition) {
+        $filename = trim((string)($definition['filename'] ?? ''));
+        $collectionKey = trim((string)($definition['collection_key'] ?? ''));
+        $fields = (array)($definition['fields'] ?? []);
+        if ($filename === '' || $collectionKey === '' || $fields === []) {
+            continue;
+        }
+
+        $path = $dir . '/' . $filename;
+        if (!is_file($path)) {
+            continue;
+        }
+
+        $payload = read_json_file($path, []);
+        if (!is_array($payload) || $payload === []) {
+            continue;
+        }
+
+        $migration = migrate_payload_timestamps($payload, $collectionKey, $fields, $sourceTimezone, $targetTimezone);
+        $markerPayload['files'][] = [
+            'filename' => $filename,
+            'records_changed' => (int)($migration['records_changed'] ?? 0),
+            'status' => !empty($migration['changed']) ? 'migrated' : 'unchanged',
+        ];
+
+        if (!empty($migration['changed'])) {
+            $pendingWrites[] = [
+                'filename' => $filename,
+                'path' => $path,
+                'payload' => (array)($migration['payload'] ?? $payload),
+            ];
+        }
+    }
+
+    if ($pendingWrites === []) {
+        $markerPayload['status'] = 'no_changes';
+        write_json_file_atomic($markerPath, $markerPayload);
+        return;
+    }
+
+    $backupDirName = 'backup_timezone_migration_' . date('Ymd_His', current_time());
+    $backupDir = $dir . '/' . $backupDirName;
+    if (!ensure_directory_writable($backupDir)) {
+        return;
+    }
+    @chmod($backupDir, 0700);
+
+    $backupMap = [];
+    foreach ($pendingWrites as $writeItem) {
+        $sourcePath = (string)($writeItem['path'] ?? '');
+        $backupPath = $backupDir . '/' . (string)($writeItem['filename'] ?? basename($sourcePath));
+        if ($sourcePath === '' || !is_file($sourcePath) || !@copy($sourcePath, $backupPath)) {
+            return;
+        }
+        @chmod($backupPath, 0600);
+        $backupMap[$sourcePath] = $backupPath;
+    }
+
+    $writtenPaths = [];
+    foreach ($pendingWrites as $writeItem) {
+        $path = (string)($writeItem['path'] ?? '');
+        $payload = (array)($writeItem['payload'] ?? []);
+        if ($path === '' || !write_json_file_atomic($path, $payload)) {
+            restore_timezone_migration_backup($writtenPaths, $backupMap);
+            return;
+        }
+        $writtenPaths[] = $path;
+    }
+
+    $markerPayload['status'] = 'migrated';
+    $markerPayload['backup_dir'] = $backupDirName;
+    write_json_file_atomic($markerPath, $markerPayload);
+}
+
 function is_password_hash_value(string $value): bool
 {
     return preg_match('/^\$(2y|2a|argon2id|argon2i)\$/', $value) === 1;
@@ -954,6 +1236,7 @@ function secure_data_dir(): string
     }
 
     bootstrap_data_storage($resolved);
+    run_timezone_data_migration($resolved);
     return $resolved;
 }
 
