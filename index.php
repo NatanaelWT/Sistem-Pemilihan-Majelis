@@ -3901,6 +3901,169 @@ function save_kesediaan_form_submission(
     return ['ok' => true, 'message' => 'Form kesediaan berhasil disimpan.'];
 }
 
+function kesediaan_status_label(string $status): string
+{
+    return match (normalize_kesediaan_status($status)) {
+        'bersedia' => 'Bersedia',
+        'tidak_bersedia' => 'Tidak Bersedia',
+        default => '-',
+    };
+}
+
+function kesediaan_interviewer_display_label(array $form): string
+{
+    $interviewerName = normalize_username((string)($form['interviewer_nama_lengkap'] ?? ''));
+    $interviewerLogin = normalize_login_username((string)($form['interviewer_login_username'] ?? ''));
+    if ($interviewerName !== '' && $interviewerLogin !== '') {
+        return $interviewerName . ' (' . $interviewerLogin . ')';
+    }
+    if ($interviewerName !== '') {
+        return $interviewerName;
+    }
+    if ($interviewerLogin !== '') {
+        return $interviewerLogin;
+    }
+
+    $updatedBy = normalize_username((string)($form['updated_by'] ?? ''));
+    return $updatedBy !== '' ? $updatedBy : '-';
+}
+
+function kesediaan_form_client_payload(array $form): array
+{
+    $fileName = trim((string)($form['file_name_original'] ?? ''));
+    if ($fileName === '') {
+        $fileName = trim((string)($form['file_path'] ?? '-'));
+    }
+    if ($fileName === '') {
+        $fileName = '-';
+    }
+
+    $updatedAt = trim((string)($form['updated_at'] ?? ''));
+
+    return [
+        'hubungan' => (string)($form['hubungan'] ?? '-'),
+        'nama_pihak' => (string)($form['nama_pihak'] ?? '-'),
+        'status' => kesediaan_status_label((string)($form['status_kesediaan'] ?? '')),
+        'alasan' => (string)($form['alasan'] ?? ''),
+        'file' => $fileName,
+        'file_url' => kesediaan_form_view_url($form),
+        'file_download_url' => kesediaan_form_view_url($form, true),
+        'file_is_image' => kesediaan_form_is_image_document($form),
+        'file_is_pdf' => kesediaan_form_is_pdf_document($form),
+        'interviewer_user' => kesediaan_interviewer_display_label($form),
+        'updated_at' => $updatedAt !== '' ? $updatedAt : '-',
+    ];
+}
+
+function build_kesediaan_recap_rows(array $formMap): array
+{
+    $rows = [];
+    foreach ($formMap as $candidateForms) {
+        if (!is_array($candidateForms)) {
+            continue;
+        }
+
+        $validForms = [];
+        foreach ($candidateForms as $form) {
+            if (is_array($form)) {
+                $validForms[] = $form;
+            }
+        }
+        if ($validForms === []) {
+            continue;
+        }
+
+        usort($validForms, static function (array $a, array $b): int {
+            return strcmp((string)($b['updated_at'] ?? ''), (string)($a['updated_at'] ?? ''));
+        });
+
+        $firstForm = $validForms[0];
+        $candidateName = trim((string)($firstForm['kandidat_nama'] ?? ''));
+        if ($candidateName === '') {
+            continue;
+        }
+
+        $candidateBranch = trim((string)($firstForm['kandidat_cabang'] ?? ''));
+        $candidateLabel = display_name_text($candidateName);
+        if ($candidateBranch !== '') {
+            $candidateLabel .= ' (' . $candidateBranch . ')';
+        }
+
+        $bersediaCount = 0;
+        $formItems = [];
+        $interviewerSeen = [];
+        $latestInterviewerUser = '-';
+        foreach ($validForms as $index => $form) {
+            $statusKey = normalize_kesediaan_status((string)($form['status_kesediaan'] ?? ''));
+            if ($statusKey === 'bersedia') {
+                $bersediaCount++;
+            }
+
+            $payload = kesediaan_form_client_payload($form);
+            $formItems[] = $payload;
+
+            $interviewerUser = trim((string)($payload['interviewer_user'] ?? '-'));
+            if ($interviewerUser === '') {
+                $interviewerUser = '-';
+            }
+            if ($index === 0) {
+                $latestInterviewerUser = $interviewerUser;
+            }
+
+            $interviewerKey = normalize_header_key($interviewerUser);
+            if ($interviewerKey === '') {
+                $interviewerKey = $interviewerUser;
+            }
+            $interviewerSeen[$interviewerKey] = true;
+        }
+
+        $latestUpdatedAtRaw = trim((string)($firstForm['updated_at'] ?? ''));
+        $rows[] = [
+            'candidate_name' => $candidateName,
+            'candidate_branch' => $candidateBranch !== '' ? $candidateBranch : '-',
+            'candidate_label' => $candidateLabel,
+            'bersedia_count' => $bersediaCount,
+            'total_forms' => count($validForms),
+            'consent_text' => $bersediaCount . '/' . count($validForms) . ' bersedia',
+            'latest_interviewer_user' => $latestInterviewerUser,
+            'additional_interviewer_count' => max(0, count($interviewerSeen) - 1),
+            'latest_updated_at' => $latestUpdatedAtRaw !== '' ? $latestUpdatedAtRaw : '-',
+            'latest_updated_at_sort' => $latestUpdatedAtRaw,
+            'form_items' => $formItems,
+        ];
+    }
+
+    usort($rows, static function (array $a, array $b): int {
+        $leftComplete = ((int)($a['total_forms'] ?? 0)) > 0
+            && ((int)($a['bersedia_count'] ?? 0)) >= ((int)($a['total_forms'] ?? 0));
+        $rightComplete = ((int)($b['total_forms'] ?? 0)) > 0
+            && ((int)($b['bersedia_count'] ?? 0)) >= ((int)($b['total_forms'] ?? 0));
+        $completeCompare = ((int)$rightComplete) <=> ((int)$leftComplete);
+        if ($completeCompare !== 0) {
+            return $completeCompare;
+        }
+
+        $formCountCompare = ((int)($b['total_forms'] ?? 0)) <=> ((int)($a['total_forms'] ?? 0));
+        if ($formCountCompare !== 0) {
+            return $formCountCompare;
+        }
+
+        $timeCompare = strcmp((string)($b['latest_updated_at_sort'] ?? ''), (string)($a['latest_updated_at_sort'] ?? ''));
+        if ($timeCompare !== 0) {
+            return $timeCompare;
+        }
+
+        $nameCompare = strnatcasecmp((string)($a['candidate_name'] ?? ''), (string)($b['candidate_name'] ?? ''));
+        if ($nameCompare !== 0) {
+            return $nameCompare;
+        }
+
+        return strnatcasecmp((string)($a['candidate_branch'] ?? ''), (string)($b['candidate_branch'] ?? ''));
+    });
+
+    return $rows;
+}
+
 function scorecard_trim_text(string $value, int $maxLength = 2000): string
 {
     $value = str_replace(["\r\n", "\r"], "\n", $value);
@@ -5535,7 +5698,7 @@ if ($page === 'bidang') {
             'bidang_en' => bidang_display_title($infoBidang, 'en'),
         ];
     } elseif ($info === 'admin-only') {
-        $infoMessage = 'Halaman dashboard hanya dapat diakses oleh admin.';
+        $infoMessage = 'Halaman ini hanya dapat diakses oleh admin.';
         $infoMessageKey = 'info_admin_only';
     } elseif ($info === 'wawancara-only') {
         $infoMessage = 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.';
@@ -5662,6 +5825,12 @@ if ($page === 'bidang') {
             }
             .btn-gembala:hover {
                 background: #1e40af;
+            }
+            .btn-consent-recap {
+                background: #b45309;
+            }
+            .btn-consent-recap:hover {
+                background: #92400e;
             }
             .grid {
                 display: grid;
@@ -5847,6 +6016,7 @@ if ($page === 'bidang') {
                     <?php if ($isAdmin): ?>
                         <a class="btn btn-dashboard" href="<?= h(app_index_url(['page' => 'dashboard'])) ?>" data-i18n="nav_dashboard">Dashboard</a>
                         <a class="btn btn-kandidat" href="<?= h(app_index_url(['page' => 'kandidat'])) ?>" data-i18n="nav_candidate">Kandidat</a>
+                        <a class="btn btn-consent-recap" href="<?= h(app_index_url(['page' => 'rekap_kesediaan'])) ?>" data-i18n="nav_consent_recap">Rekap Kesediaan</a>
                     <?php endif; ?>
                     <?php if ($canAccessWawancara): ?>
                         <a class="btn btn-wawancara" href="<?= h(app_index_url(['page' => 'wawancara'])) ?>" data-i18n="nav_interview">Wawancara</a>
@@ -5919,6 +6089,7 @@ if ($page === 'bidang') {
             'bidang_intro' => ['id' => 'Pilih bidang yang diinginkan. Login sebagai <strong>{username}</strong> ({branch}).', 'en' => 'Choose the position you want. Signed in as <strong>{username}</strong> ({branch}).'],
             'nav_dashboard' => ['id' => 'Dashboard', 'en' => 'Dashboard'],
             'nav_candidate' => ['id' => 'Kandidat', 'en' => 'Candidates'],
+            'nav_consent_recap' => ['id' => 'Rekap Kesediaan', 'en' => 'Consent Recap'],
             'nav_interview' => ['id' => 'Wawancara', 'en' => 'Interviews'],
             'nav_branch_monitor' => ['id' => 'Pantauan Cabang', 'en' => 'Branch Monitor'],
             'nav_logout' => ['id' => 'Logout', 'en' => 'Logout'],
@@ -5928,7 +6099,7 @@ if ($page === 'bidang') {
             'bidang_choose_now' => ['id' => 'Pilih Sekarang', 'en' => 'Choose Now'],
             'info_already_voted' => ['id' => 'Anda sudah melakukan vote pada {bidang}. Silakan pilih bidang lainnya.', 'en' => 'You have already voted for {bidang_en}. Please choose another position.'],
             'info_vote_saved' => ['id' => 'Vote untuk {bidang} berhasil disimpan.', 'en' => 'Your vote for {bidang_en} was saved successfully.'],
-            'info_admin_only' => ['id' => 'Halaman dashboard hanya dapat diakses oleh admin.', 'en' => 'The dashboard page can only be accessed by admins.'],
+            'info_admin_only' => ['id' => 'Halaman ini hanya dapat diakses oleh admin.', 'en' => 'This page can only be accessed by admins.'],
             'info_interview_only' => ['id' => 'Halaman wawancara hanya dapat diakses oleh admin atau pewawancara.', 'en' => 'The interview page can only be accessed by admins or interviewers.'],
             'info_branch_only' => ['id' => 'Halaman pantauan cabang hanya dapat diakses oleh gembala lokal.', 'en' => 'The branch monitoring page can only be accessed by local pastors.'],
             'info_voting_ended' => ['id' => 'Masa pemilihan sudah berakhir pada {date}.', 'en' => 'The voting period ended on {date}.'],
@@ -7839,6 +8010,625 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'dashboard_log_candidate' => ['id' => 'Kandidat', 'en' => 'Candidate'],
             'dashboard_log_candidate_branch' => ['id' => 'Cabang Kandidat', 'en' => 'Candidate Branch'],
             'dashboard_log_event' => ['id' => 'Event', 'en' => 'Event'],
+        ]); ?>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($page === 'rekap_kesediaan') {
+    $authUser = current_authenticated_user($usersForLogin);
+    if ($authUser === null) {
+        clear_auth_session();
+        redirect_to_page('login');
+    }
+    if (!user_has_role($authUser, 'admin')) {
+        redirect_to_page('bidang', ['info' => 'admin-only']);
+    }
+
+    sync_session_roles($authUser);
+
+    $kesediaanRecapRows = build_kesediaan_recap_rows(load_kesediaan_form_map());
+    $kesediaanRecapTotalCandidates = count($kesediaanRecapRows);
+    $kesediaanRecapTotalForms = 0;
+    foreach ($kesediaanRecapRows as $rekapRow) {
+        $kesediaanRecapTotalForms += (int)($rekapRow['total_forms'] ?? 0);
+    }
+    ?>
+    <!doctype html>
+    <html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>PeMa REC Indonesia</title>
+        <link rel="icon" type="image/png" href="logo.png">
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+                color: #0f172a;
+                min-height: 100vh;
+                padding: 24px 16px;
+            }
+            body.modal-open {
+                overflow: hidden;
+            }
+            .wrap {
+                width: 100%;
+                max-width: 1180px;
+                margin: 0 auto;
+            }
+            .panel {
+                background: #fff;
+                border: 1px solid #e2e8f0;
+                border-radius: 18px;
+                box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+                padding: 24px;
+            }
+            .topbar {
+                display: flex;
+                justify-content: space-between;
+                gap: 16px;
+                align-items: flex-start;
+                margin-bottom: 18px;
+            }
+            .topbar-copy h1 {
+                margin: 0 0 6px;
+                font-size: 28px;
+            }
+            .topbar-copy p {
+                margin: 0;
+                color: #475569;
+                line-height: 1.5;
+            }
+            .top-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: flex-end;
+            }
+            .btn-back {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 38px;
+                padding: 0 14px;
+                border-radius: 10px;
+                border: 1px solid #cbd5e1;
+                background: #f8fafc;
+                color: #0f172a;
+                text-decoration: none;
+                font-size: 14px;
+                font-weight: 700;
+            }
+            .btn-back:hover {
+                background: #eef2ff;
+                border-color: #94a3b8;
+            }
+            .summary-bar {
+                margin-bottom: 16px;
+                padding: 14px 16px;
+                border: 1px solid #dbeafe;
+                border-radius: 12px;
+                background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+            }
+            .summary-bar p {
+                margin: 0;
+                color: #1e3a8a;
+                line-height: 1.5;
+            }
+            .empty {
+                margin: 0;
+                padding: 18px;
+                border-radius: 12px;
+                border: 1px dashed #cbd5e1;
+                background: #f8fafc;
+                color: #64748b;
+                text-align: center;
+            }
+            .table-wrap {
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+                overflow: auto;
+                background: #fff;
+            }
+            .recap-table {
+                width: 100%;
+                min-width: 940px;
+                border-collapse: collapse;
+            }
+            .recap-table th,
+            .recap-table td {
+                padding: 12px 14px;
+                border-bottom: 1px solid #e2e8f0;
+                text-align: left;
+                vertical-align: top;
+                font-size: 14px;
+                line-height: 1.45;
+            }
+            .recap-table th {
+                background: #f8fafc;
+                color: #334155;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                position: sticky;
+                top: 0;
+                z-index: 1;
+            }
+            .recap-table tr:last-child td {
+                border-bottom: 0;
+            }
+            .candidate-name {
+                margin: 0;
+                font-size: 15px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            .candidate-branch {
+                margin: 4px 0 0;
+                color: #64748b;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .ratio-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 6px 10px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 700;
+                border: 1px solid #cbd5e1;
+                background: #f1f5f9;
+                color: #475569;
+                white-space: nowrap;
+            }
+            .ratio-badge.partial {
+                border-color: #93c5fd;
+                background: #dbeafe;
+                color: #1d4ed8;
+            }
+            .ratio-badge.complete {
+                border-color: #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .view-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 34px;
+                padding: 0 12px;
+                border: 1px solid #0f766e;
+                border-radius: 8px;
+                background: #0f766e;
+                color: #fff;
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .view-btn:hover {
+                background: #0d9488;
+                border-color: #0d9488;
+            }
+            .view-btn:focus-visible,
+            .btn-back:focus-visible,
+            .doc-modal-close:focus-visible,
+            .doc-view-link:focus-visible {
+                outline: 3px solid #bfdbfe;
+                outline-offset: 2px;
+            }
+            .interviewer-main {
+                margin: 0;
+                color: #0f172a;
+                font-weight: 600;
+            }
+            .interviewer-more {
+                margin: 4px 0 0;
+                color: #64748b;
+                font-size: 12px;
+            }
+            .mono {
+                font-family: Consolas, monospace;
+                color: #475569;
+                white-space: nowrap;
+            }
+            .doc-modal {
+                position: fixed;
+                inset: 0;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                background: rgba(15, 23, 42, 0.6);
+                z-index: 1000;
+            }
+            .doc-modal.open {
+                display: flex;
+            }
+            .doc-modal-panel {
+                width: min(1040px, 100%);
+                max-height: calc(100vh - 40px);
+                overflow: auto;
+                background: #fff;
+                border-radius: 16px;
+                border: 1px solid #dbe3ef;
+                box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+                padding: 20px;
+            }
+            .doc-modal-title {
+                margin: 0 0 8px;
+                font-size: 22px;
+                color: #0f172a;
+            }
+            .doc-modal-text {
+                margin: 0 0 14px;
+                color: #475569;
+                line-height: 1.5;
+            }
+            .doc-view-table-wrap {
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                overflow: auto;
+            }
+            .doc-view-table {
+                width: 100%;
+                min-width: 920px;
+                border-collapse: collapse;
+            }
+            .doc-view-table th,
+            .doc-view-table td {
+                padding: 10px 12px;
+                border-bottom: 1px solid #e2e8f0;
+                text-align: left;
+                vertical-align: top;
+                font-size: 13px;
+                line-height: 1.45;
+            }
+            .doc-view-table th {
+                background: #f8fafc;
+                color: #334155;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .doc-view-table tr:last-child td {
+                border-bottom: 0;
+            }
+            .doc-view-link-group {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+            .doc-view-link {
+                color: #0f766e;
+                font-weight: 700;
+                text-decoration: none;
+            }
+            .doc-view-link:hover {
+                text-decoration: underline;
+            }
+            .doc-view-empty {
+                padding: 16px;
+                border-radius: 12px;
+                border: 1px dashed #cbd5e1;
+                background: #f8fafc;
+                color: #64748b;
+                text-align: center;
+            }
+            .doc-modal-actions {
+                margin-top: 16px;
+                display: flex;
+                justify-content: flex-end;
+            }
+            .doc-modal-close {
+                min-height: 38px;
+                padding: 0 14px;
+                border: 1px solid #cbd5e1;
+                border-radius: 10px;
+                background: #f8fafc;
+                color: #0f172a;
+                font-size: 14px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .doc-modal-close:hover {
+                background: #eef2ff;
+            }
+            @media (max-width: 760px) {
+                .panel {
+                    padding: 18px;
+                }
+                .topbar {
+                    flex-direction: column;
+                }
+                .top-actions {
+                    width: 100%;
+                    justify-content: flex-start;
+                }
+                .btn-back {
+                    width: 100%;
+                }
+            }
+        </style>
+        <?php render_language_switcher_head(); ?>
+    </head>
+    <body>
+        <main class="wrap">
+            <section class="panel">
+                <div class="topbar">
+                    <div class="topbar-copy">
+                        <h1 data-i18n="consent_recap_title">Rekap Form Kesediaan</h1>
+                        <p data-i18n-html="consent_recap_intro" data-i18n-vars="<?= h((string)json_encode(['candidates' => (string)$kesediaanRecapTotalCandidates, 'forms' => (string)$kesediaanRecapTotalForms], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">Menampilkan <strong><?= h((string)$kesediaanRecapTotalCandidates) ?></strong> kandidat dengan total <strong><?= h((string)$kesediaanRecapTotalForms) ?></strong> form kesediaan yang sudah tersimpan.</p>
+                    </div>
+                    <div class="top-actions">
+                        <a class="btn-back" href="<?= h(app_index_url(['page' => 'bidang'])) ?>" data-i18n="consent_recap_back">Kembali ke Halaman Bidang</a>
+                    </div>
+                </div>
+
+                <?php if ($kesediaanRecapRows === []): ?>
+                    <p class="empty" data-i18n="consent_recap_empty">Belum ada form kesediaan yang tersimpan.</p>
+                <?php else: ?>
+                    <div class="summary-bar">
+                        <p data-i18n="consent_recap_summary_note">Kolom user pewawancara dan waktu menampilkan pengisian form terbaru untuk masing-masing kandidat.</p>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="recap-table">
+                            <thead>
+                                <tr>
+                                    <th data-i18n="consent_recap_candidate">Nama Kandidat</th>
+                                    <th data-i18n="consent_recap_willingness">Kesediaan</th>
+                                    <th data-i18n="consent_recap_view_forms">Lihat Form</th>
+                                    <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
+                                    <th data-i18n="consent_recap_time">Waktu</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($kesediaanRecapRows as $row): ?>
+                                    <?php
+                                    $rowTotalForms = (int)($row['total_forms'] ?? 0);
+                                    $rowBersediaCount = (int)($row['bersedia_count'] ?? 0);
+                                    $ratioBadgeClass = 'ratio-badge';
+                                    if ($rowTotalForms > 0 && $rowBersediaCount >= $rowTotalForms) {
+                                        $ratioBadgeClass .= ' complete';
+                                    } elseif ($rowBersediaCount > 0) {
+                                        $ratioBadgeClass .= ' partial';
+                                    }
+                                    $rowFormItemsJsonRaw = json_encode((array)($row['form_items'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                                    if (!is_string($rowFormItemsJsonRaw)) {
+                                        $rowFormItemsJsonRaw = '[]';
+                                    }
+                                    $rowAdditionalInterviewers = max(0, (int)($row['additional_interviewer_count'] ?? 0));
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
+                                            <p class="candidate-branch"><?= h((string)($row['candidate_branch'] ?? '-')) ?></p>
+                                        </td>
+                                        <td>
+                                            <span class="<?= h($ratioBadgeClass) ?>"><?= h((string)($row['consent_text'] ?? '0/0 bersedia')) ?></span>
+                                        </td>
+                                        <td>
+                                            <button
+                                                class="view-btn"
+                                                type="button"
+                                                data-candidate-label="<?= h((string)($row['candidate_label'] ?? '-')) ?>"
+                                                data-form-items="<?= h($rowFormItemsJsonRaw) ?>"
+                                                onclick="showKesediaanRecapModal(this)"
+                                                data-i18n="consent_recap_view_forms"
+                                            >Lihat Form</button>
+                                        </td>
+                                        <td>
+                                            <p class="interviewer-main"><?= h((string)($row['latest_interviewer_user'] ?? '-')) ?></p>
+                                            <?php if ($rowAdditionalInterviewers > 0): ?>
+                                                <p class="interviewer-more" data-i18n="consent_recap_interviewer_more" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$rowAdditionalInterviewers], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">+<?= h((string)$rowAdditionalInterviewers) ?> pewawancara lainnya</p>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="mono"><?= h((string)($row['latest_updated_at'] ?? '-')) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            </section>
+        </main>
+
+        <div class="doc-modal" id="kesediaanRecapModal" role="dialog" aria-modal="true" aria-labelledby="kesediaanRecapTitle">
+            <div class="doc-modal-panel">
+                <h2 class="doc-modal-title" id="kesediaanRecapTitle" data-i18n="consent_recap_modal_title">Lihat Form Kesediaan</h2>
+                <p class="doc-modal-text"><span data-i18n="consent_recap_modal_candidate_label">Kandidat:</span> <strong id="kesediaanRecapCandidate">-</strong></p>
+                <div id="kesediaanRecapTableWrap" class="doc-view-table-wrap" style="display:none;">
+                    <table class="doc-view-table">
+                        <thead>
+                            <tr>
+                                <th data-i18n="consent_recap_no">No</th>
+                                <th data-i18n="consent_recap_party">Pihak</th>
+                                <th data-i18n="consent_recap_party_name">Nama Pihak</th>
+                                <th data-i18n="consent_recap_status">Status</th>
+                                <th data-i18n="consent_recap_reason">Alasan</th>
+                                <th data-i18n="consent_recap_document">Dokumen</th>
+                                <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
+                                <th data-i18n="consent_recap_time">Waktu</th>
+                            </tr>
+                        </thead>
+                        <tbody id="kesediaanRecapBody"></tbody>
+                    </table>
+                </div>
+                <div id="kesediaanRecapEmpty" class="doc-view-empty" data-i18n="consent_recap_modal_empty">Belum ada form kesediaan yang tersimpan untuk kandidat ini.</div>
+                <div class="doc-modal-actions">
+                    <button class="doc-modal-close" type="button" onclick="closeKesediaanRecapModal()" data-i18n="consent_recap_close">Tutup</button>
+                </div>
+            </div>
+        </div>
+
+        <?php render_language_switcher(); ?>
+        <script>
+            const kesediaanRecapModal = document.getElementById('kesediaanRecapModal');
+            const kesediaanRecapCandidate = document.getElementById('kesediaanRecapCandidate');
+            const kesediaanRecapTableWrap = document.getElementById('kesediaanRecapTableWrap');
+            const kesediaanRecapBody = document.getElementById('kesediaanRecapBody');
+            const kesediaanRecapEmpty = document.getElementById('kesediaanRecapEmpty');
+
+            function recapT(key, fallback, vars) {
+                if (window.majelisLang && typeof window.majelisLang.t === 'function') {
+                    return window.majelisLang.t(key, vars || {}, fallback || '');
+                }
+                return fallback || '';
+            }
+
+            function escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function sanitizeSafeUrl(value) {
+                const trimmed = String(value || '').trim();
+                if (trimmed === '') {
+                    return '';
+                }
+
+                try {
+                    const parsed = new URL(trimmed, window.location.href);
+                    if (parsed.origin !== window.location.origin) {
+                        return '';
+                    }
+                    return parsed.toString();
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            function syncRecapBodyScrollState() {
+                document.body.classList.toggle('modal-open', !!(kesediaanRecapModal && kesediaanRecapModal.classList.contains('open')));
+            }
+
+            function closeKesediaanRecapModal() {
+                if (!kesediaanRecapModal) {
+                    return;
+                }
+                kesediaanRecapModal.classList.remove('open');
+                syncRecapBodyScrollState();
+            }
+
+            function showKesediaanRecapModal(buttonElement) {
+                if (!buttonElement || !kesediaanRecapModal || !kesediaanRecapCandidate || !kesediaanRecapTableWrap || !kesediaanRecapBody || !kesediaanRecapEmpty) {
+                    return;
+                }
+
+                const candidateLabel = String(buttonElement.dataset.candidateLabel || '').trim();
+                let formItems = [];
+                try {
+                    const decoded = JSON.parse(buttonElement.dataset.formItems || '[]');
+                    if (Array.isArray(decoded)) {
+                        formItems = decoded;
+                    }
+                } catch (error) {
+                    formItems = [];
+                }
+
+                kesediaanRecapCandidate.textContent = candidateLabel !== '' ? candidateLabel : '-';
+                if (formItems.length === 0) {
+                    kesediaanRecapBody.innerHTML = '';
+                    kesediaanRecapTableWrap.style.display = 'none';
+                    kesediaanRecapEmpty.style.display = 'block';
+                } else {
+                    const rows = [];
+                    formItems.forEach(function (item, idx) {
+                        const recapHubungan = item && item.hubungan ? String(item.hubungan) : '-';
+                        const recapNamaPihak = item && item.nama_pihak ? String(item.nama_pihak) : '-';
+                        const recapStatus = item && item.status ? String(item.status) : '-';
+                        const recapAlasan = item && item.alasan ? String(item.alasan) : '-';
+                        const recapInterviewerUser = item && item.interviewer_user ? String(item.interviewer_user) : '-';
+                        const recapUpdatedAt = item && item.updated_at ? String(item.updated_at) : '-';
+                        const recapFileUrl = sanitizeSafeUrl(item && item.file_url ? String(item.file_url) : '');
+                        const recapDownloadUrl = sanitizeSafeUrl(item && item.file_download_url ? String(item.file_download_url) : '');
+
+                        let recapDocCell = '<span>-</span>';
+                        if (recapFileUrl !== '' || recapDownloadUrl !== '') {
+                            const actionLinks = [];
+                            if (recapFileUrl !== '') {
+                                actionLinks.push('<a class="doc-view-link" href="' + escapeHtml(recapFileUrl) + '" target="_blank" rel="noopener">' + escapeHtml(recapT('consent_recap_view', 'Lihat')) + '</a>');
+                            }
+                            if (recapDownloadUrl !== '') {
+                                actionLinks.push('<a class="doc-view-link" href="' + escapeHtml(recapDownloadUrl) + '" target="_blank" rel="noopener">' + escapeHtml(recapT('consent_recap_download', 'Unduh')) + '</a>');
+                            }
+                            recapDocCell = '<div class="doc-view-link-group">' + actionLinks.join('') + '</div>';
+                        }
+
+                        rows.push(
+                            '<tr>' +
+                                '<td>' + escapeHtml(String(idx + 1)) + '</td>' +
+                                '<td>' + escapeHtml(recapHubungan) + '</td>' +
+                                '<td>' + escapeHtml(recapNamaPihak) + '</td>' +
+                                '<td>' + escapeHtml(recapStatus) + '</td>' +
+                                '<td>' + escapeHtml(recapAlasan) + '</td>' +
+                                '<td>' + recapDocCell + '</td>' +
+                                '<td>' + escapeHtml(recapInterviewerUser) + '</td>' +
+                                '<td>' + escapeHtml(recapUpdatedAt) + '</td>' +
+                            '</tr>'
+                        );
+                    });
+
+                    if (rows.length === 0) {
+                        rows.push('<tr><td colspan="8">' + escapeHtml(recapT('consent_recap_modal_empty', 'Belum ada form kesediaan yang tersimpan untuk kandidat ini.')) + '</td></tr>');
+                    }
+
+                    kesediaanRecapBody.innerHTML = rows.join('');
+                    kesediaanRecapTableWrap.style.display = 'block';
+                    kesediaanRecapEmpty.style.display = 'none';
+                }
+
+                kesediaanRecapModal.classList.add('open');
+                syncRecapBodyScrollState();
+            }
+
+            if (kesediaanRecapModal) {
+                kesediaanRecapModal.addEventListener('click', function (event) {
+                    if (event.target === kesediaanRecapModal) {
+                        closeKesediaanRecapModal();
+                    }
+                });
+            }
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && kesediaanRecapModal && kesediaanRecapModal.classList.contains('open')) {
+                    closeKesediaanRecapModal();
+                }
+            });
+        </script>
+        <?php render_language_script([
+            'consent_recap_title' => ['id' => 'Rekap Form Kesediaan', 'en' => 'Consent Form Recap'],
+            'consent_recap_intro' => ['id' => 'Menampilkan <strong>{candidates}</strong> kandidat dengan total <strong>{forms}</strong> form kesediaan yang sudah tersimpan.', 'en' => 'Showing <strong>{candidates}</strong> candidates with a total of <strong>{forms}</strong> saved consent forms.'],
+            'consent_recap_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
+            'consent_recap_empty' => ['id' => 'Belum ada form kesediaan yang tersimpan.', 'en' => 'There are no saved consent forms yet.'],
+            'consent_recap_summary_note' => ['id' => 'Kolom user pewawancara dan waktu menampilkan pengisian form terbaru untuk masing-masing kandidat.', 'en' => 'The interviewer user and time columns show the latest form submission for each candidate.'],
+            'consent_recap_candidate' => ['id' => 'Nama Kandidat', 'en' => 'Candidate Name'],
+            'consent_recap_willingness' => ['id' => 'Kesediaan', 'en' => 'Willingness'],
+            'consent_recap_view_forms' => ['id' => 'Lihat Form', 'en' => 'View Forms'],
+            'consent_recap_interviewer_user' => ['id' => 'User Pewawancara', 'en' => 'Interviewer User'],
+            'consent_recap_time' => ['id' => 'Waktu', 'en' => 'Time'],
+            'consent_recap_interviewer_more' => ['id' => '+{count} pewawancara lainnya', 'en' => '+{count} other interviewers'],
+            'consent_recap_modal_title' => ['id' => 'Lihat Form Kesediaan', 'en' => 'View Consent Forms'],
+            'consent_recap_modal_candidate_label' => ['id' => 'Kandidat:', 'en' => 'Candidate:'],
+            'consent_recap_no' => ['id' => 'No', 'en' => 'No'],
+            'consent_recap_party' => ['id' => 'Pihak', 'en' => 'Party'],
+            'consent_recap_party_name' => ['id' => 'Nama Pihak', 'en' => 'Party Name'],
+            'consent_recap_status' => ['id' => 'Status', 'en' => 'Status'],
+            'consent_recap_reason' => ['id' => 'Alasan', 'en' => 'Reason'],
+            'consent_recap_document' => ['id' => 'Dokumen', 'en' => 'Document'],
+            'consent_recap_modal_empty' => ['id' => 'Belum ada form kesediaan yang tersimpan untuk kandidat ini.', 'en' => 'There are no saved consent forms for this candidate yet.'],
+            'consent_recap_close' => ['id' => 'Tutup', 'en' => 'Close'],
+            'consent_recap_view' => ['id' => 'Lihat', 'en' => 'View'],
+            'consent_recap_download' => ['id' => 'Unduh', 'en' => 'Download'],
         ]); ?>
     </body>
     </html>
