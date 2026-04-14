@@ -8163,6 +8163,12 @@ if ($page === 'rekap_kesediaan') {
             .recap-table tr:last-child td {
                 border-bottom: 0;
             }
+            .recap-table .col-no,
+            .recap-table .cell-no {
+                width: 62px;
+                text-align: center;
+                white-space: nowrap;
+            }
             .candidate-name {
                 margin: 0;
                 font-size: 15px;
@@ -8380,6 +8386,7 @@ if ($page === 'rekap_kesediaan') {
                         <table class="recap-table">
                             <thead>
                                 <tr>
+                                    <th class="col-no" data-i18n="consent_recap_no">No</th>
                                     <th data-i18n="consent_recap_candidate">Nama Kandidat</th>
                                     <th data-i18n="consent_recap_willingness">Kesediaan</th>
                                     <th data-i18n="consent_recap_view_forms">Lihat Form</th>
@@ -8388,7 +8395,7 @@ if ($page === 'rekap_kesediaan') {
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($kesediaanRecapRows as $row): ?>
+                                <?php foreach ($kesediaanRecapRows as $rowIndex => $row): ?>
                                     <?php
                                     $rowTotalForms = (int)($row['total_forms'] ?? 0);
                                     $rowBersediaCount = (int)($row['bersedia_count'] ?? 0);
@@ -8405,6 +8412,7 @@ if ($page === 'rekap_kesediaan') {
                                     $rowAdditionalInterviewers = max(0, (int)($row['additional_interviewer_count'] ?? 0));
                                     ?>
                                     <tr>
+                                        <td class="cell-no"><?= h((string)($rowIndex + 1)) ?></td>
                                         <td>
                                             <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
                                             <p class="candidate-branch"><?= h((string)($row['candidate_branch'] ?? '-')) ?></p>
