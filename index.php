@@ -4257,16 +4257,24 @@ function build_kesediaan_recap_rows(array $formMap): array
         }
 
         usort($validForms, static function (array $a, array $b): int {
-            return strcmp((string)($b['updated_at'] ?? ''), (string)($a['updated_at'] ?? ''));
+            $leftTime = trim((string)($a['updated_at'] ?? ''));
+            $rightTime = trim((string)($b['updated_at'] ?? ''));
+            if ($leftTime === '' && $rightTime !== '') {
+                return 1;
+            }
+            if ($leftTime !== '' && $rightTime === '') {
+                return -1;
+            }
+            return strcmp($leftTime, $rightTime);
         });
 
-        $firstForm = $validForms[0];
-        $candidateName = trim((string)($firstForm['kandidat_nama'] ?? ''));
+        $latestForm = $validForms[count($validForms) - 1];
+        $candidateName = trim((string)($latestForm['kandidat_nama'] ?? ''));
         if ($candidateName === '') {
             continue;
         }
 
-        $candidateBranch = trim((string)($firstForm['kandidat_cabang'] ?? ''));
+        $candidateBranch = trim((string)($latestForm['kandidat_cabang'] ?? ''));
         $candidateLabel = display_name_text($candidateName);
         if ($candidateBranch !== '') {
             $candidateLabel .= ' (' . $candidateBranch . ')';
@@ -4276,7 +4284,7 @@ function build_kesediaan_recap_rows(array $formMap): array
         $formItems = [];
         $interviewerSeen = [];
         $latestInterviewerUser = '-';
-        foreach ($validForms as $index => $form) {
+        foreach ($validForms as $form) {
             $statusKey = normalize_kesediaan_status((string)($form['status_kesediaan'] ?? ''));
             if ($statusKey === 'bersedia') {
                 $bersediaCount++;
@@ -4289,9 +4297,7 @@ function build_kesediaan_recap_rows(array $formMap): array
             if ($interviewerUser === '') {
                 $interviewerUser = '-';
             }
-            if ($index === 0) {
-                $latestInterviewerUser = $interviewerUser;
-            }
+            $latestInterviewerUser = $interviewerUser;
 
             $interviewerKey = normalize_header_key($interviewerUser);
             if ($interviewerKey === '') {
@@ -4300,7 +4306,7 @@ function build_kesediaan_recap_rows(array $formMap): array
             $interviewerSeen[$interviewerKey] = true;
         }
 
-        $latestUpdatedAtRaw = trim((string)($firstForm['updated_at'] ?? ''));
+        $latestUpdatedAtRaw = trim((string)($latestForm['updated_at'] ?? ''));
         $rows[] = [
             'candidate_name' => $candidateName,
             'candidate_branch' => $candidateBranch !== '' ? $candidateBranch : '-',
@@ -4317,21 +4323,15 @@ function build_kesediaan_recap_rows(array $formMap): array
     }
 
     usort($rows, static function (array $a, array $b): int {
-        $leftComplete = ((int)($a['total_forms'] ?? 0)) > 0
-            && ((int)($a['bersedia_count'] ?? 0)) >= ((int)($a['total_forms'] ?? 0));
-        $rightComplete = ((int)($b['total_forms'] ?? 0)) > 0
-            && ((int)($b['bersedia_count'] ?? 0)) >= ((int)($b['total_forms'] ?? 0));
-        $completeCompare = ((int)$rightComplete) <=> ((int)$leftComplete);
-        if ($completeCompare !== 0) {
-            return $completeCompare;
+        $leftTime = trim((string)($a['latest_updated_at_sort'] ?? ''));
+        $rightTime = trim((string)($b['latest_updated_at_sort'] ?? ''));
+        if ($leftTime === '' && $rightTime !== '') {
+            return 1;
         }
-
-        $formCountCompare = ((int)($b['total_forms'] ?? 0)) <=> ((int)($a['total_forms'] ?? 0));
-        if ($formCountCompare !== 0) {
-            return $formCountCompare;
+        if ($leftTime !== '' && $rightTime === '') {
+            return -1;
         }
-
-        $timeCompare = strcmp((string)($b['latest_updated_at_sort'] ?? ''), (string)($a['latest_updated_at_sort'] ?? ''));
+        $timeCompare = strcmp($leftTime, $rightTime);
         if ($timeCompare !== 0) {
             return $timeCompare;
         }
@@ -4345,6 +4345,94 @@ function build_kesediaan_recap_rows(array $formMap): array
     });
 
     return $rows;
+}
+
+function is_kesediaan_recap_row_complete(array $row): bool
+{
+    $totalForms = (int)($row['total_forms'] ?? 0);
+    if ($totalForms <= 0) {
+        return false;
+    }
+
+    return ((int)($row['bersedia_count'] ?? 0)) >= $totalForms;
+}
+
+function render_kesediaan_recap_table_section(
+    array $rows,
+    string $sectionTitleKey,
+    string $sectionTitleFallback,
+    string $emptyKey,
+    string $emptyFallback
+): void {
+    ?>
+    <div class="recap-section">
+        <h2 class="recap-section-title" data-i18n="<?= h($sectionTitleKey) ?>"><?= h($sectionTitleFallback) ?></h2>
+        <?php if ($rows === []): ?>
+            <p class="empty recap-section-empty" data-i18n="<?= h($emptyKey) ?>"><?= h($emptyFallback) ?></p>
+        <?php else: ?>
+            <div class="table-wrap">
+                <table class="recap-table">
+                    <thead>
+                        <tr>
+                            <th class="col-no" data-i18n="consent_recap_no">No</th>
+                            <th data-i18n="consent_recap_candidate">Nama Kandidat</th>
+                            <th data-i18n="consent_recap_willingness">Kesediaan</th>
+                            <th data-i18n="consent_recap_view_forms">Lihat Form</th>
+                            <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
+                            <th data-i18n="consent_recap_time">Waktu Input</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($rows as $rowIndex => $row): ?>
+                            <?php
+                            $rowTotalForms = (int)($row['total_forms'] ?? 0);
+                            $rowBersediaCount = (int)($row['bersedia_count'] ?? 0);
+                            $ratioBadgeClass = 'ratio-badge';
+                            if ($rowTotalForms > 0 && $rowBersediaCount >= $rowTotalForms) {
+                                $ratioBadgeClass .= ' complete';
+                            } elseif ($rowBersediaCount > 0) {
+                                $ratioBadgeClass .= ' partial';
+                            }
+                            $rowFormItemsJsonRaw = json_encode((array)($row['form_items'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                            if (!is_string($rowFormItemsJsonRaw)) {
+                                $rowFormItemsJsonRaw = '[]';
+                            }
+                            $rowAdditionalInterviewers = max(0, (int)($row['additional_interviewer_count'] ?? 0));
+                            ?>
+                            <tr>
+                                <td class="cell-no"><?= h((string)($rowIndex + 1)) ?></td>
+                                <td>
+                                    <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
+                                    <p class="candidate-branch"><?= h((string)($row['candidate_branch'] ?? '-')) ?></p>
+                                </td>
+                                <td>
+                                    <span class="<?= h($ratioBadgeClass) ?>"><?= h((string)($row['consent_text'] ?? '0/0 bersedia')) ?></span>
+                                </td>
+                                <td>
+                                    <button
+                                        class="view-btn"
+                                        type="button"
+                                        data-candidate-label="<?= h((string)($row['candidate_label'] ?? '-')) ?>"
+                                        data-form-items="<?= h($rowFormItemsJsonRaw) ?>"
+                                        onclick="showKesediaanRecapModal(this)"
+                                        data-i18n="consent_recap_view_forms"
+                                    >Lihat Form</button>
+                                </td>
+                                <td>
+                                    <p class="interviewer-main"><?= h((string)($row['latest_interviewer_user'] ?? '-')) ?></p>
+                                    <?php if ($rowAdditionalInterviewers > 0): ?>
+                                        <p class="interviewer-more" data-i18n="consent_recap_interviewer_more" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$rowAdditionalInterviewers], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">+<?= h((string)$rowAdditionalInterviewers) ?> pewawancara lainnya</p>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="mono"><?= h((string)($row['latest_updated_at'] ?? '-')) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+    <?php
 }
 
 function scorecard_trim_text(string $value, int $maxLength = 2000): string
@@ -8313,6 +8401,15 @@ if ($page === 'rekap_kesediaan') {
     sync_session_roles($authUser);
 
     $kesediaanRecapRows = build_kesediaan_recap_rows(load_kesediaan_form_map());
+    $kesediaanRecapCompleteRows = [];
+    $kesediaanRecapIncompleteRows = [];
+    foreach ($kesediaanRecapRows as $rekapRow) {
+        if (is_kesediaan_recap_row_complete($rekapRow)) {
+            $kesediaanRecapCompleteRows[] = $rekapRow;
+            continue;
+        }
+        $kesediaanRecapIncompleteRows[] = $rekapRow;
+    }
     $kesediaanRecapTotalCandidates = count($kesediaanRecapRows);
     $kesediaanRecapTotalForms = 0;
     foreach ($kesediaanRecapRows as $rekapRow) {
@@ -8403,6 +8500,17 @@ if ($page === 'rekap_kesediaan') {
                 margin: 0;
                 color: #1e3a8a;
                 line-height: 1.5;
+            }
+            .recap-section + .recap-section {
+                margin-top: 22px;
+            }
+            .recap-section-title {
+                margin: 0 0 12px;
+                font-size: 18px;
+                color: #0f172a;
+            }
+            .recap-section-empty {
+                margin-top: 0;
             }
             .empty {
                 margin: 0;
@@ -8663,68 +8771,22 @@ if ($page === 'rekap_kesediaan') {
                     <p class="empty" data-i18n="consent_recap_empty">Belum ada form kesediaan yang tersimpan.</p>
                 <?php else: ?>
                     <div class="summary-bar">
-                        <p data-i18n="consent_recap_summary_note">Kolom user pewawancara dan waktu menampilkan pengisian form terbaru untuk masing-masing kandidat.</p>
+                        <p data-i18n="consent_recap_summary_note">Setiap tabel diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.</p>
                     </div>
-                    <div class="table-wrap">
-                        <table class="recap-table">
-                            <thead>
-                                <tr>
-                                    <th class="col-no" data-i18n="consent_recap_no">No</th>
-                                    <th data-i18n="consent_recap_candidate">Nama Kandidat</th>
-                                    <th data-i18n="consent_recap_willingness">Kesediaan</th>
-                                    <th data-i18n="consent_recap_view_forms">Lihat Form</th>
-                                    <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
-                                    <th data-i18n="consent_recap_time">Waktu</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($kesediaanRecapRows as $rowIndex => $row): ?>
-                                    <?php
-                                    $rowTotalForms = (int)($row['total_forms'] ?? 0);
-                                    $rowBersediaCount = (int)($row['bersedia_count'] ?? 0);
-                                    $ratioBadgeClass = 'ratio-badge';
-                                    if ($rowTotalForms > 0 && $rowBersediaCount >= $rowTotalForms) {
-                                        $ratioBadgeClass .= ' complete';
-                                    } elseif ($rowBersediaCount > 0) {
-                                        $ratioBadgeClass .= ' partial';
-                                    }
-                                    $rowFormItemsJsonRaw = json_encode((array)($row['form_items'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                                    if (!is_string($rowFormItemsJsonRaw)) {
-                                        $rowFormItemsJsonRaw = '[]';
-                                    }
-                                    $rowAdditionalInterviewers = max(0, (int)($row['additional_interviewer_count'] ?? 0));
-                                    ?>
-                                    <tr>
-                                        <td class="cell-no"><?= h((string)($rowIndex + 1)) ?></td>
-                                        <td>
-                                            <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
-                                            <p class="candidate-branch"><?= h((string)($row['candidate_branch'] ?? '-')) ?></p>
-                                        </td>
-                                        <td>
-                                            <span class="<?= h($ratioBadgeClass) ?>"><?= h((string)($row['consent_text'] ?? '0/0 bersedia')) ?></span>
-                                        </td>
-                                        <td>
-                                            <button
-                                                class="view-btn"
-                                                type="button"
-                                                data-candidate-label="<?= h((string)($row['candidate_label'] ?? '-')) ?>"
-                                                data-form-items="<?= h($rowFormItemsJsonRaw) ?>"
-                                                onclick="showKesediaanRecapModal(this)"
-                                                data-i18n="consent_recap_view_forms"
-                                            >Lihat Form</button>
-                                        </td>
-                                        <td>
-                                            <p class="interviewer-main"><?= h((string)($row['latest_interviewer_user'] ?? '-')) ?></p>
-                                            <?php if ($rowAdditionalInterviewers > 0): ?>
-                                                <p class="interviewer-more" data-i18n="consent_recap_interviewer_more" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$rowAdditionalInterviewers], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>">+<?= h((string)$rowAdditionalInterviewers) ?> pewawancara lainnya</p>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="mono"><?= h((string)($row['latest_updated_at'] ?? '-')) ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
+                    <?php render_kesediaan_recap_table_section(
+                        $kesediaanRecapCompleteRows,
+                        'consent_recap_complete_table_title',
+                        'Kandidat 100% Bersedia',
+                        'consent_recap_complete_table_empty',
+                        'Belum ada kandidat dengan kesediaan 100%.'
+                    ); ?>
+                    <?php render_kesediaan_recap_table_section(
+                        $kesediaanRecapIncompleteRows,
+                        'consent_recap_incomplete_table_title',
+                        'Kandidat Tidak 100% Bersedia',
+                        'consent_recap_incomplete_table_empty',
+                        'Belum ada kandidat yang kesediaannya belum 100%.'
+                    ); ?>
                 <?php endif; ?>
             </section>
         </main>
@@ -8744,7 +8806,7 @@ if ($page === 'rekap_kesediaan') {
                                 <th data-i18n="consent_recap_reason">Alasan</th>
                                 <th data-i18n="consent_recap_document">Dokumen</th>
                                 <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
-                                <th data-i18n="consent_recap_time">Waktu</th>
+                                <th data-i18n="consent_recap_time">Waktu Input</th>
                             </tr>
                         </thead>
                         <tbody id="kesediaanRecapBody"></tbody>
@@ -8901,12 +8963,16 @@ if ($page === 'rekap_kesediaan') {
             'consent_recap_intro' => ['id' => 'Menampilkan <strong>{candidates}</strong> kandidat dengan total <strong>{forms}</strong> form kesediaan yang sudah tersimpan.', 'en' => 'Showing <strong>{candidates}</strong> candidates with a total of <strong>{forms}</strong> saved consent forms.'],
             'consent_recap_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
             'consent_recap_empty' => ['id' => 'Belum ada form kesediaan yang tersimpan.', 'en' => 'There are no saved consent forms yet.'],
-            'consent_recap_summary_note' => ['id' => 'Kolom user pewawancara dan waktu menampilkan pengisian form terbaru untuk masing-masing kandidat.', 'en' => 'The interviewer user and time columns show the latest form submission for each candidate.'],
+            'consent_recap_summary_note' => ['id' => 'Setiap tabel diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.', 'en' => 'Each table is sorted by each candidate\'s latest input time from oldest to newest. The interviewer user column shows the latest form submission for each candidate.'],
+            'consent_recap_complete_table_title' => ['id' => 'Kandidat 100% Bersedia', 'en' => '100% Willing Candidates'],
+            'consent_recap_complete_table_empty' => ['id' => 'Belum ada kandidat dengan kesediaan 100%.', 'en' => 'There are no candidates with 100% willingness yet.'],
+            'consent_recap_incomplete_table_title' => ['id' => 'Kandidat Tidak 100% Bersedia', 'en' => 'Candidates Not Yet 100% Willing'],
+            'consent_recap_incomplete_table_empty' => ['id' => 'Belum ada kandidat yang kesediaannya belum 100%.', 'en' => 'There are no candidates below 100% willingness.'],
             'consent_recap_candidate' => ['id' => 'Nama Kandidat', 'en' => 'Candidate Name'],
             'consent_recap_willingness' => ['id' => 'Kesediaan', 'en' => 'Willingness'],
             'consent_recap_view_forms' => ['id' => 'Lihat Form', 'en' => 'View Forms'],
             'consent_recap_interviewer_user' => ['id' => 'User Pewawancara', 'en' => 'Interviewer User'],
-            'consent_recap_time' => ['id' => 'Waktu', 'en' => 'Time'],
+            'consent_recap_time' => ['id' => 'Waktu Input', 'en' => 'Input Time'],
             'consent_recap_interviewer_more' => ['id' => '+{count} pewawancara lainnya', 'en' => '+{count} other interviewers'],
             'consent_recap_modal_title' => ['id' => 'Lihat Form Kesediaan', 'en' => 'View Consent Forms'],
             'consent_recap_modal_candidate_label' => ['id' => 'Kandidat:', 'en' => 'Candidate:'],
