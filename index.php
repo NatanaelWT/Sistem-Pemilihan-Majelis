@@ -12,6 +12,7 @@ const LEGACY_USER_FILE = __DIR__ . '/users.json';
 const LEGACY_FLAGGING_FILE = __DIR__ . '/flagging.json';
 const LEGACY_ASSIGNMENT_FILE = __DIR__ . '/wawancara_assignment.json';
 const LEGACY_KESEDIAAN_FORM_FILE = __DIR__ . '/kesediaan_form.json';
+const LEGACY_SCORECARD_BIDANG_ASSIGNMENT_FILE = __DIR__ . '/scorecard_bidang_assignment.json';
 const LEGACY_SCORECARD_TEMPLATE_FILE = __DIR__ . '/scorecard_templates.json';
 const LEGACY_SCORECARD_SUBMISSION_FILE = __DIR__ . '/scorecard_submissions.json';
 
@@ -762,6 +763,7 @@ function legacy_file_for(string $filename): string
         'flagging.json' => LEGACY_FLAGGING_FILE,
         'wawancara_assignment.json' => LEGACY_ASSIGNMENT_FILE,
         'kesediaan_form.json' => LEGACY_KESEDIAAN_FORM_FILE,
+        'scorecard_bidang_assignment.json' => LEGACY_SCORECARD_BIDANG_ASSIGNMENT_FILE,
         'scorecard_templates.json' => LEGACY_SCORECARD_TEMPLATE_FILE,
         'scorecard_submissions.json' => LEGACY_SCORECARD_SUBMISSION_FILE,
         default => '',
@@ -790,6 +792,7 @@ function default_payload_for_file(string $filename): array
         'flagging.json' => ['flags' => []],
         'wawancara_assignment.json' => ['assignments' => []],
         'kesediaan_form.json' => ['forms' => []],
+        'scorecard_bidang_assignment.json' => ['assignments' => []],
         'scorecard_templates.json' => default_scorecard_templates_data(),
         'scorecard_submissions.json' => ['submissions' => []],
         'login_rate.json' => default_login_rate_data(),
@@ -937,6 +940,11 @@ function timezone_migration_definitions(): array
         [
             'filename' => 'kesediaan_form.json',
             'collection_key' => 'forms',
+            'fields' => ['updated_at'],
+        ],
+        [
+            'filename' => 'scorecard_bidang_assignment.json',
+            'collection_key' => 'assignments',
             'fields' => ['updated_at'],
         ],
         [
@@ -1178,6 +1186,7 @@ function bootstrap_data_storage(string $dir): void
         'flagging.json',
         'wawancara_assignment.json',
         'kesediaan_form.json',
+        'scorecard_bidang_assignment.json',
         'scorecard_templates.json',
         'scorecard_submissions.json',
         'login_rate.json',
@@ -1283,6 +1292,11 @@ function wawancara_assignment_file_path(): string
 function kesediaan_form_file_path(): string
 {
     return secure_data_dir() . '/kesediaan_form.json';
+}
+
+function scorecard_bidang_assignment_file_path(): string
+{
+    return secure_data_dir() . '/scorecard_bidang_assignment.json';
 }
 
 function scorecard_template_file_path(): string
@@ -4357,12 +4371,40 @@ function is_kesediaan_recap_row_complete(array $row): bool
     return ((int)($row['bersedia_count'] ?? 0)) >= $totalForms;
 }
 
+function is_kesediaan_candidate_forms_complete(array $candidateForms): bool
+{
+    $totalForms = 0;
+    $bersediaCount = 0;
+
+    foreach ($candidateForms as $form) {
+        if (!is_array($form)) {
+            continue;
+        }
+
+        $statusKey = normalize_kesediaan_status((string)($form['status_kesediaan'] ?? ''));
+        if ($statusKey === '') {
+            continue;
+        }
+
+        $totalForms++;
+        if ($statusKey === 'bersedia') {
+            $bersediaCount++;
+        }
+    }
+
+    return $totalForms > 0 && $bersediaCount >= $totalForms;
+}
+
 function render_kesediaan_recap_table_section(
     array $rows,
     string $sectionTitleKey,
     string $sectionTitleFallback,
     string $emptyKey,
-    string $emptyFallback
+    string $emptyFallback,
+    bool $showScorecardAssignment = false,
+    string $csrfToken = '',
+    array $scorecardAssignmentMap = [],
+    array $scorecardSubmissionMap = []
 ): void {
     ?>
     <div class="recap-section">
@@ -4378,6 +4420,9 @@ function render_kesediaan_recap_table_section(
                             <th data-i18n="consent_recap_candidate">Nama Kandidat</th>
                             <th data-i18n="consent_recap_willingness">Kesediaan</th>
                             <th data-i18n="consent_recap_view_forms">Lihat Form</th>
+                            <?php if ($showScorecardAssignment): ?>
+                                <th data-i18n="consent_recap_scorecard_position">Pilih Bidang Score Card</th>
+                            <?php endif; ?>
                             <th data-i18n="consent_recap_interviewer_user">User Pewawancara</th>
                             <th data-i18n="consent_recap_time">Waktu Input</th>
                         </tr>
@@ -4398,8 +4443,21 @@ function render_kesediaan_recap_table_section(
                                 $rowFormItemsJsonRaw = '[]';
                             }
                             $rowAdditionalInterviewers = max(0, (int)($row['additional_interviewer_count'] ?? 0));
+                            $rowCandidateName = (string)($row['candidate_name'] ?? '');
+                            $rowCandidateBranch = (string)($row['candidate_branch'] ?? '');
+                            $rowAssignmentKey = scorecard_bidang_assignment_key($rowCandidateName, $rowCandidateBranch);
+                            $rowAssignedScorecardBidang = trim((string)($scorecardAssignmentMap[$rowAssignmentKey]['scorecard_bidang'] ?? ''));
+                            $rowScorecardBidangOptions = $showScorecardAssignment
+                                ? scorecard_selectable_bidang_titles_for_candidate($rowCandidateBranch, $rowAssignedScorecardBidang !== '' ? [$rowAssignedScorecardBidang] : [])
+                                : [];
+                            $rowScorecardSubmissionKey = $rowAssignedScorecardBidang !== ''
+                                ? flagging_candidate_key($rowAssignedScorecardBidang, $rowCandidateName, $rowCandidateBranch)
+                                : '';
+                            $rowScorecardSubmission = $rowScorecardSubmissionKey !== '' ? (array)($scorecardSubmissionMap[$rowScorecardSubmissionKey] ?? []) : [];
+                            $rowIsScorecardSubmitted = !empty($rowScorecardSubmission['is_submitted']);
+                            $rowScorecardAnchorId = 'scorecard-' . substr($rowAssignmentKey, 0, 18);
                             ?>
-                            <tr>
+                            <tr id="<?= h($rowScorecardAnchorId) ?>">
                                 <td class="cell-no"><?= h((string)($rowIndex + 1)) ?></td>
                                 <td>
                                     <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
@@ -4418,6 +4476,28 @@ function render_kesediaan_recap_table_section(
                                         data-i18n="consent_recap_view_forms"
                                     >Lihat Form</button>
                                 </td>
+                                <?php if ($showScorecardAssignment): ?>
+                                    <td>
+                                        <form class="scorecard-assign-form" method="post" action="<?= h(app_index_url(['page' => 'rekap_kesediaan']) . '#' . $rowScorecardAnchorId) ?>">
+                                            <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                            <input type="hidden" name="consent_recap_action" value="assign_scorecard_bidang">
+                                            <input type="hidden" name="target_kandidat_nama" value="<?= h($rowCandidateName) ?>">
+                                            <input type="hidden" name="target_kandidat_cabang" value="<?= h($rowCandidateBranch) ?>">
+                                            <select
+                                                class="scorecard-assign-select"
+                                                name="target_scorecard_bidang"
+                                                title="<?= h($rowIsScorecardSubmitted ? 'Score card sudah disubmit. Batalkan submit dari halaman kandidat jika perlu revisi.' : 'Tentukan bidang score card kandidat ini') ?>"
+                                                onchange="this.form.submit()"
+                                                <?= $rowIsScorecardSubmitted ? 'disabled' : '' ?>
+                                            >
+                                                <option value="" data-i18n="consent_recap_scorecard_position_placeholder">Pilih bidang score card</option>
+                                                <?php foreach ($rowScorecardBidangOptions as $rowScorecardBidangOption): ?>
+                                                    <option value="<?= h((string)$rowScorecardBidangOption) ?>" <?= (string)$rowScorecardBidangOption === $rowAssignedScorecardBidang ? 'selected' : '' ?>><?= h((string)$rowScorecardBidangOption) ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </form>
+                                    </td>
+                                <?php endif; ?>
                                 <td>
                                     <p class="interviewer-main"><?= h((string)($row['latest_interviewer_user'] ?? '-')) ?></p>
                                     <?php if ($rowAdditionalInterviewers > 0): ?>
@@ -4710,6 +4790,201 @@ function find_scorecard_template_for_bidang(string $bidang): ?array
     }
 
     return isset($templates[0]) && is_array($templates[0]) ? $templates[0] : null;
+}
+
+function scorecard_selectable_bidang_titles_for_candidate(string $candidateCabang, array $additionalTitles = []): array
+{
+    $titles = [];
+    $seen = [];
+    $candidateCabang = trim($candidateCabang);
+
+    foreach (personalize_bidang_list_for_cabang(load_bidang_data(), $candidateCabang) as $bidangItem) {
+        if (!is_array($bidangItem)) {
+            continue;
+        }
+
+        $title = trim((string)($bidangItem['title'] ?? ''));
+        $key = normalize_header_key($title);
+        if ($title === '' || $key === '' || isset($seen[$key])) {
+            continue;
+        }
+
+        $titles[] = $title;
+        $seen[$key] = true;
+    }
+
+    foreach ($additionalTitles as $additionalTitle) {
+        $title = trim((string)$additionalTitle);
+        $key = normalize_header_key($title);
+        if ($title === '' || $key === '' || isset($seen[$key])) {
+            continue;
+        }
+
+        $titles[] = $title;
+        $seen[$key] = true;
+    }
+
+    return $titles;
+}
+
+function scorecard_is_selectable_bidang_for_candidate(string $bidang, string $candidateCabang): bool
+{
+    $targetKey = normalize_header_key($bidang);
+    if ($targetKey === '') {
+        return false;
+    }
+
+    foreach (scorecard_selectable_bidang_titles_for_candidate($candidateCabang) as $allowedTitle) {
+        if ($targetKey === normalize_header_key((string)$allowedTitle)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function scorecard_bidang_assignment_key(string $kandidatNama, string $kandidatCabang): string
+{
+    return kesediaan_candidate_key($kandidatNama, $kandidatCabang);
+}
+
+function load_scorecard_bidang_assignment_data(): array
+{
+    $empty = ['assignments' => []];
+    $decoded = read_json_file(scorecard_bidang_assignment_file_path(), $empty);
+    if (!is_array($decoded) || !isset($decoded['assignments']) || !is_array($decoded['assignments'])) {
+        return $empty;
+    }
+
+    $normalized = [];
+    foreach ($decoded['assignments'] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        $scorecardBidang = trim((string)($item['scorecard_bidang'] ?? ''));
+        if ($kandidatNama === '' || $kandidatCabang === '' || $scorecardBidang === '') {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            $key = scorecard_bidang_assignment_key($kandidatNama, $kandidatCabang);
+        }
+
+        $normalized[] = [
+            'key' => $key,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'scorecard_bidang' => $scorecardBidang,
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    return ['assignments' => $normalized];
+}
+
+function load_scorecard_bidang_assignment_map(): array
+{
+    $data = load_scorecard_bidang_assignment_data();
+    $map = [];
+    foreach ((array)($data['assignments'] ?? []) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        $map[$key] = $item;
+    }
+
+    return $map;
+}
+
+function save_scorecard_bidang_assignment_map(array $map): bool
+{
+    $assignments = [];
+    foreach ($map as $key => $item) {
+        if (!is_string($key) || !is_array($item)) {
+            continue;
+        }
+
+        $kandidatNama = trim((string)($item['kandidat_nama'] ?? ''));
+        $kandidatCabang = trim((string)($item['kandidat_cabang'] ?? ''));
+        $scorecardBidang = trim((string)($item['scorecard_bidang'] ?? ''));
+        if ($kandidatNama === '' || $kandidatCabang === '' || $scorecardBidang === '') {
+            continue;
+        }
+
+        $assignments[] = [
+            'key' => $key,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'scorecard_bidang' => $scorecardBidang,
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            'updated_by' => normalize_username((string)($item['updated_by'] ?? '')),
+        ];
+    }
+
+    usort($assignments, static function (array $a, array $b): int {
+        $left = (string)($a['kandidat_nama'] ?? '') . '|' . (string)($a['kandidat_cabang'] ?? '');
+        $right = (string)($b['kandidat_nama'] ?? '') . '|' . (string)($b['kandidat_cabang'] ?? '');
+        return strnatcasecmp($left, $right);
+    });
+
+    return write_json_file_atomic(scorecard_bidang_assignment_file_path(), ['assignments' => $assignments]);
+}
+
+function set_candidate_scorecard_bidang_assignment(
+    string $kandidatNama,
+    string $kandidatCabang,
+    string $scorecardBidang,
+    string $updatedBy
+): array {
+    $kandidatNama = trim($kandidatNama);
+    $kandidatCabang = trim($kandidatCabang);
+    $scorecardBidang = trim($scorecardBidang);
+    $updatedBy = normalize_username($updatedBy);
+
+    if ($kandidatNama === '' || $kandidatCabang === '') {
+        return ['ok' => false, 'message' => 'Data kandidat tidak valid untuk penentuan bidang score card.'];
+    }
+
+    if ($scorecardBidang !== '' && !scorecard_is_selectable_bidang_for_candidate($scorecardBidang, $kandidatCabang)) {
+        return ['ok' => false, 'message' => 'Bidang score card yang dipilih tidak valid untuk kandidat ini.'];
+    }
+
+    $key = scorecard_bidang_assignment_key($kandidatNama, $kandidatCabang);
+    $map = load_scorecard_bidang_assignment_map();
+
+    if ($scorecardBidang === '') {
+        unset($map[$key]);
+    } else {
+        $map[$key] = [
+            'key' => $key,
+            'kandidat_nama' => $kandidatNama,
+            'kandidat_cabang' => $kandidatCabang,
+            'scorecard_bidang' => $scorecardBidang,
+            'updated_at' => date('Y-m-d H:i:s', current_time()),
+            'updated_by' => $updatedBy,
+        ];
+    }
+
+    if (!save_scorecard_bidang_assignment_map($map)) {
+        return ['ok' => false, 'message' => 'Gagal menyimpan bidang score card kandidat.'];
+    }
+
+    return [
+        'ok' => true,
+        'message' => $scorecardBidang === ''
+            ? 'Bidang score card kandidat berhasil dikosongkan.'
+            : 'Bidang score card kandidat berhasil diperbarui.',
+    ];
 }
 
 function scorecard_recommendation_label(array $template, float $finalScore): string
@@ -5214,6 +5489,74 @@ function scorecard_submission_client_payload(array $submission): array
         'submitted_by_name' => (string)($submission['submitted_by_name'] ?? ''),
         'updated_at' => (string)($submission['updated_at'] ?? ''),
     ];
+}
+
+function scorecard_submissions_for_candidate(array $submissionMap, string $kandidatNama, string $kandidatCabang): array
+{
+    $targetName = normalize_header_key($kandidatNama);
+    $targetCabang = normalize_header_key($kandidatCabang);
+    if ($targetName === '' || $targetCabang === '') {
+        return [];
+    }
+
+    $matches = [];
+    foreach ($submissionMap as $submission) {
+        if (!is_array($submission)) {
+            continue;
+        }
+
+        $submissionName = normalize_header_key((string)($submission['kandidat_nama'] ?? ''));
+        $submissionCabang = normalize_header_key((string)($submission['kandidat_cabang'] ?? ''));
+        if ($submissionName !== $targetName || $submissionCabang !== $targetCabang) {
+            continue;
+        }
+
+        $matches[] = $submission;
+    }
+
+    usort($matches, static function (array $a, array $b): int {
+        $timeA = trim((string)($a['updated_at'] ?? ''));
+        if ($timeA === '') {
+            $timeA = trim((string)($a['submitted_at'] ?? ''));
+        }
+        $timeB = trim((string)($b['updated_at'] ?? ''));
+        if ($timeB === '') {
+            $timeB = trim((string)($b['submitted_at'] ?? ''));
+        }
+
+        $timeCompare = strcmp($timeB, $timeA);
+        if ($timeCompare !== 0) {
+            return $timeCompare;
+        }
+
+        $submittedCompare = ((int)!empty($b['is_submitted'])) <=> ((int)!empty($a['is_submitted']));
+        if ($submittedCompare !== 0) {
+            return $submittedCompare;
+        }
+
+        return strnatcasecmp((string)($a['bidang'] ?? ''), (string)($b['bidang'] ?? ''));
+    });
+
+    return $matches;
+}
+
+function scorecard_submission_payloads_by_bidang(array $submissions): array
+{
+    $payloads = [];
+    foreach ($submissions as $submission) {
+        if (!is_array($submission)) {
+            continue;
+        }
+
+        $bidang = trim((string)($submission['bidang'] ?? ''));
+        if ($bidang === '' || isset($payloads[$bidang])) {
+            continue;
+        }
+
+        $payloads[$bidang] = scorecard_submission_client_payload($submission);
+    }
+
+    return $payloads;
 }
 
 function is_candidate_in_top10_summary(array $bidangSummary, string $bidang, string $kandidatNama, string $kandidatCabang): bool
@@ -7195,14 +7538,15 @@ if ($page === 'dashboard' || $page === 'kandidat') {
         $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
         $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
         $flagType = trim((string)($_POST['flag_type'] ?? ''));
+        $normalizedFlagType = strtolower($flagType);
 
         if (!is_valid_csrf_token($postedCsrfToken)) {
             $flaggingErrorMessage = 'Sesi tidak valid. Muat ulang halaman kandidat lalu coba lagi.';
         } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
             $flaggingErrorMessage = 'Data kandidat untuk flagging tidak lengkap.';
-        } elseif (!is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
+        } elseif ($normalizedFlagType !== 'scorecard_submit' && !is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
             $flaggingErrorMessage = 'Flagging hanya dapat dilakukan pada kandidat Top 10 di bidang terkait.';
-        } elseif (strtolower($flagType) === 'lanjut') {
+        } elseif ($normalizedFlagType === 'lanjut') {
             if (!$isKandidatPage) {
                 $flaggingErrorMessage = 'Perubahan status lanjut proses hanya dapat dilakukan dari halaman kandidat admin.';
             } else {
@@ -7242,7 +7586,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                     }
                 }
             }
-        } elseif (strtolower($flagType) === 'scorecard_submit') {
+        } elseif ($normalizedFlagType === 'scorecard_submit') {
             $flagResult = cancel_submitted_scorecard_submission(
                 $targetBidang,
                 $targetKandidatNama,
@@ -7275,6 +7619,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     $flaggingMap = load_flagging_map();
     $scorecardSubmissionMap = load_scorecard_submission_map();
     $kesediaanFormMap = load_kesediaan_form_map();
+    $scorecardBidangAssignmentMap = load_scorecard_bidang_assignment_map();
 
     $totalPemilih = count($uniqueVoterMap);
     $totalBidangTerisi = count($bidangSummary);
@@ -7606,7 +7951,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 font-size: 14px;
             }
             .kandidat-filter-select:focus-visible,
-            .assign-select:focus-visible,
             .flag-btn:focus-visible,
             .file-input:focus-visible,
             .btn-import:focus-visible {
@@ -7685,9 +8029,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 gap: 4px;
                 flex-wrap: wrap;
             }
-            .assign-state {
-                margin-top: 0;
-            }
             .flag-badge {
                 display: inline-block;
                 padding: 2px 7px;
@@ -7750,32 +8091,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 margin-top: 8px;
                 display: flex;
                 gap: 6px;
-                flex-wrap: nowrap;
+                flex-wrap: wrap;
                 align-items: center;
-            }
-            .assign-form {
-                margin-top: 0;
-                display: flex;
-                gap: 8px;
-                flex-wrap: nowrap;
-                align-items: center;
-                flex: 0 0 auto;
-            }
-            .assign-select {
-                flex: 0 1 168px;
-                min-width: 132px;
-                border: 1px solid #cbd5e1;
-                border-radius: 8px;
-                padding: 0 10px;
-                height: 32px;
-                font-size: 12px;
-                background: #fff;
-                color: #1e293b;
-            }
-            .assign-note {
-                margin: 6px 0 0;
-                color: #92400e;
-                font-size: 12px;
             }
             .flag-btn {
                 border: 1px solid #cbd5e1;
@@ -7901,15 +8218,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 }
                 .flag-form {
                     flex-wrap: wrap;
-                }
-                .assign-form {
-                    flex-wrap: wrap;
-                    width: 100%;
-                }
-                .assign-select {
-                    flex: 1 1 100%;
-                    min-width: 0;
-                    width: 100%;
                 }
             }
         </style>
@@ -8099,17 +8407,31 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                             $candidateKesediaanBadgeClass = $candidateBersediaCount >= $candidateTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
                                         }
                                         $canToggleCandidateLanjutProses = $isLanjutProses || $candidateTotalFormCount > 0;
-                                        $candidateScorecardSubmission = (array)($scorecardSubmissionMap[$candidateFlagKey] ?? []);
+                                        $candidateScorecardAssignmentKey = scorecard_bidang_assignment_key($candidateNama, $candidateCabang);
+                                        $candidateAssignedScorecardBidang = trim((string)($scorecardBidangAssignmentMap[$candidateScorecardAssignmentKey]['scorecard_bidang'] ?? ''));
+                                        $candidateScorecardKey = $candidateAssignedScorecardBidang !== ''
+                                            ? flagging_candidate_key($candidateAssignedScorecardBidang, $candidateNama, $candidateCabang)
+                                            : '';
+                                        $candidateScorecardSubmission = $candidateScorecardKey !== ''
+                                            ? (array)($scorecardSubmissionMap[$candidateScorecardKey] ?? [])
+                                            : [];
                                         $candidateHasScorecard = $candidateScorecardSubmission !== [];
                                         $isScorecardSubmitted = !empty($candidateScorecardSubmission['is_submitted']);
                                         $candidateScorecardFinalScore = $candidateHasScorecard
                                             ? round((float)($candidateScorecardSubmission['final_score'] ?? 0), 2)
                                             : 0.0;
-                                        $candidateScorecardBadgeText = 'Skor Akhir: ' . ($candidateHasScorecard
-                                            ? number_format($candidateScorecardFinalScore, 2, '.', '')
-                                            : '0');
+                                        $candidateScorecardBadgeText = $candidateHasScorecard
+                                            ? 'Skor Akhir: ' . number_format($candidateScorecardFinalScore, 2, '.', '')
+                                            : 'Belum Ada Score Card';
                                         $candidateScorecardBadgeClass = $candidateHasScorecard ? ' scorecard-on' : ' scorecard-empty';
+                                        $candidateAssignedScorecardBadgeText = $candidateAssignedScorecardBidang !== ''
+                                            ? 'Bidang Score Card: ' . $candidateAssignedScorecardBidang
+                                            : 'Bidang Score Card Belum Ditentukan';
+                                        $candidateAssignedScorecardBadgeClass = $candidateAssignedScorecardBidang !== '' ? ' interviewer-on' : '';
                                         $screeningActionType = $isScorecardSubmitted ? 'scorecard_submit' : 'screening';
+                                        $screeningActionTargetBidang = $isScorecardSubmitted && $candidateAssignedScorecardBidang !== ''
+                                            ? $candidateAssignedScorecardBidang
+                                            : (string)$bidang;
                                         $screeningButtonClass = $isLolosScreening || $isScorecardSubmitted ? ' active-screening' : '';
                                         $screeningButtonDisabled = !$isLanjutProses && !$isScorecardSubmitted;
                                         $screeningButtonTitle = 'Status lanjut proses masih belum aktif.';
@@ -8142,6 +8464,9 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
+                                                <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
+                                                    <?= h($candidateAssignedScorecardBadgeText) ?>
+                                                </span>
                                                 <span class="flag-badge on screening-on" data-i18n="filter_screening">
                                                     Lolos Screening
                                                 </span>
@@ -8152,12 +8477,18 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
+                                                <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
+                                                    <?= h($candidateAssignedScorecardBadgeText) ?>
+                                                </span>
                                                 <span class="flag-badge" data-i18n="filter_not_advanced">
                                                     Belum Lanjut Proses
                                                 </span>
                                                 <?php else: ?>
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
+                                                </span>
+                                                <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
+                                                    <?= h($candidateAssignedScorecardBadgeText) ?>
                                                 </span>
                                                 <span class="flag-badge on" data-i18n="filter_advanced">
                                                     Lanjut Proses
@@ -8189,7 +8520,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
                                                     <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
                                                     <input type="hidden" name="dashboard_action" value="toggle_candidate_flag">
-                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                    <input type="hidden" name="target_bidang" value="<?= h($screeningActionTargetBidang) ?>">
                                                     <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
                                                     <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
                                                     <button
@@ -8400,7 +8731,54 @@ if ($page === 'rekap_kesediaan') {
 
     sync_session_roles($authUser);
 
-    $kesediaanRecapRows = build_kesediaan_recap_rows(load_kesediaan_form_map());
+    $kesediaanRecapCsrfToken = csrf_token();
+    $kesediaanRecapAction = trim((string)($_POST['consent_recap_action'] ?? ''));
+    $kesediaanRecapSuccessMessage = '';
+    $kesediaanRecapErrorMessage = '';
+    $kesediaanRecapFormMap = load_kesediaan_form_map();
+    $kesediaanRecapScorecardAssignmentMap = load_scorecard_bidang_assignment_map();
+    $kesediaanRecapScorecardSubmissionMap = load_scorecard_submission_map();
+
+    if ($method === 'POST' && $kesediaanRecapAction === 'assign_scorecard_bidang') {
+        $postedCsrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $targetKandidatNama = trim((string)($_POST['target_kandidat_nama'] ?? ''));
+        $targetKandidatCabang = trim((string)($_POST['target_kandidat_cabang'] ?? ''));
+        $targetScorecardBidang = trim((string)($_POST['target_scorecard_bidang'] ?? ''));
+
+        $candidateAssignmentKey = scorecard_bidang_assignment_key($targetKandidatNama, $targetKandidatCabang);
+        $candidateForms = (array)($kesediaanRecapFormMap[$candidateAssignmentKey] ?? []);
+        $currentAssignedBidang = trim((string)($kesediaanRecapScorecardAssignmentMap[$candidateAssignmentKey]['scorecard_bidang'] ?? ''));
+        $currentSubmissionKey = $currentAssignedBidang !== ''
+            ? flagging_candidate_key($currentAssignedBidang, $targetKandidatNama, $targetKandidatCabang)
+            : '';
+        $currentSubmission = $currentSubmissionKey !== '' ? (array)($kesediaanRecapScorecardSubmissionMap[$currentSubmissionKey] ?? []) : [];
+
+        if (!is_valid_csrf_token($postedCsrfToken)) {
+            $kesediaanRecapErrorMessage = 'Sesi tidak valid. Muat ulang halaman rekap kesediaan lalu coba lagi.';
+        } elseif ($targetKandidatNama === '' || $targetKandidatCabang === '') {
+            $kesediaanRecapErrorMessage = 'Data kandidat untuk bidang score card tidak lengkap.';
+        } elseif (!is_kesediaan_candidate_forms_complete($candidateForms)) {
+            $kesediaanRecapErrorMessage = 'Bidang score card hanya dapat ditentukan untuk kandidat 100% bersedia.';
+        } elseif ($currentAssignedBidang !== '' && $targetScorecardBidang !== $currentAssignedBidang && !empty($currentSubmission['is_submitted'])) {
+            $kesediaanRecapErrorMessage = 'Bidang score card tidak dapat diubah karena score card bidang saat ini sudah disubmit. Batalkan submit terlebih dahulu jika perlu revisi.';
+        } else {
+            $assignmentResult = set_candidate_scorecard_bidang_assignment(
+                $targetKandidatNama,
+                $targetKandidatCabang,
+                $targetScorecardBidang,
+                (string)($authUser['username'] ?? '')
+            );
+
+            if (!($assignmentResult['ok'] ?? false)) {
+                $kesediaanRecapErrorMessage = (string)($assignmentResult['message'] ?? 'Gagal menyimpan bidang score card kandidat.');
+            } else {
+                $kesediaanRecapSuccessMessage = (string)($assignmentResult['message'] ?? 'Bidang score card kandidat berhasil diperbarui.');
+                $kesediaanRecapScorecardAssignmentMap = load_scorecard_bidang_assignment_map();
+            }
+        }
+    }
+
+    $kesediaanRecapRows = build_kesediaan_recap_rows($kesediaanRecapFormMap);
     $kesediaanRecapCompleteRows = [];
     $kesediaanRecapIncompleteRows = [];
     foreach ($kesediaanRecapRows as $rekapRow) {
@@ -8501,6 +8879,24 @@ if ($page === 'rekap_kesediaan') {
                 color: #1e3a8a;
                 line-height: 1.5;
             }
+            .alert {
+                margin-bottom: 14px;
+                padding: 12px 14px;
+                border-radius: 10px;
+                font-size: 14px;
+                line-height: 1.5;
+                font-weight: 700;
+            }
+            .alert.success {
+                border: 1px solid #86efac;
+                background: #dcfce7;
+                color: #166534;
+            }
+            .alert.error {
+                border: 1px solid #fecaca;
+                background: #fee2e2;
+                color: #991b1b;
+            }
             .recap-section + .recap-section {
                 margin-top: 22px;
             }
@@ -8529,7 +8925,7 @@ if ($page === 'rekap_kesediaan') {
             }
             .recap-table {
                 width: 100%;
-                min-width: 940px;
+                min-width: 1120px;
                 border-collapse: collapse;
             }
             .recap-table th,
@@ -8613,7 +9009,26 @@ if ($page === 'rekap_kesediaan') {
                 background: #0d9488;
                 border-color: #0d9488;
             }
+            .scorecard-assign-form {
+                margin: 0;
+            }
+            .scorecard-assign-select {
+                width: min(100%, 260px);
+                min-height: 36px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #fff;
+                color: #1e293b;
+                padding: 0 10px;
+                font-size: 13px;
+            }
+            .scorecard-assign-select:disabled {
+                background: #f1f5f9;
+                color: #64748b;
+                cursor: not-allowed;
+            }
             .view-btn:focus-visible,
+            .scorecard-assign-select:focus-visible,
             .btn-back:focus-visible,
             .doc-modal-close:focus-visible,
             .doc-view-link:focus-visible {
@@ -8767,6 +9182,13 @@ if ($page === 'rekap_kesediaan') {
                     </div>
                 </div>
 
+                <?php if ($kesediaanRecapSuccessMessage !== ''): ?>
+                    <div class="alert success"><?= h($kesediaanRecapSuccessMessage) ?></div>
+                <?php endif; ?>
+                <?php if ($kesediaanRecapErrorMessage !== ''): ?>
+                    <div class="alert error"><?= h($kesediaanRecapErrorMessage) ?></div>
+                <?php endif; ?>
+
                 <?php if ($kesediaanRecapRows === []): ?>
                     <p class="empty" data-i18n="consent_recap_empty">Belum ada form kesediaan yang tersimpan.</p>
                 <?php else: ?>
@@ -8778,7 +9200,11 @@ if ($page === 'rekap_kesediaan') {
                         'consent_recap_complete_table_title',
                         'Kandidat 100% Bersedia',
                         'consent_recap_complete_table_empty',
-                        'Belum ada kandidat dengan kesediaan 100%.'
+                        'Belum ada kandidat dengan kesediaan 100%.',
+                        true,
+                        $kesediaanRecapCsrfToken,
+                        $kesediaanRecapScorecardAssignmentMap,
+                        $kesediaanRecapScorecardSubmissionMap
                     ); ?>
                     <?php render_kesediaan_recap_table_section(
                         $kesediaanRecapIncompleteRows,
@@ -8971,6 +9397,8 @@ if ($page === 'rekap_kesediaan') {
             'consent_recap_candidate' => ['id' => 'Nama Kandidat', 'en' => 'Candidate Name'],
             'consent_recap_willingness' => ['id' => 'Kesediaan', 'en' => 'Willingness'],
             'consent_recap_view_forms' => ['id' => 'Lihat Form', 'en' => 'View Forms'],
+            'consent_recap_scorecard_position' => ['id' => 'Pilih Bidang Score Card', 'en' => 'Choose Score Card Position'],
+            'consent_recap_scorecard_position_placeholder' => ['id' => 'Pilih bidang score card', 'en' => 'Choose score card position'],
             'consent_recap_interviewer_user' => ['id' => 'User Pewawancara', 'en' => 'Interviewer User'],
             'consent_recap_time' => ['id' => 'Waktu Input', 'en' => 'Input Time'],
             'consent_recap_interviewer_more' => ['id' => '+{count} pewawancara lainnya', 'en' => '+{count} other interviewers'],
@@ -9003,7 +9431,7 @@ if ($page === 'wawancara') {
         redirect_to_page('bidang', ['info' => 'wawancara-only']);
     }
 
-    $wawancaraAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
+    $wawancaraAllowedProcessFilters = ['all', 'scorecard_empty', 'scorecard_draft', 'scorecard_submitted'];
     $wawancaraProcessFilter = normalize_query_choice((string)($_GET['wawancara_filter'] ?? ''), $wawancaraAllowedProcessFilters, 'all');
     $wawancaraPageParams = ['page' => 'wawancara'];
     if ($wawancaraProcessFilter !== 'all') {
@@ -9014,142 +9442,12 @@ if ($page === 'wawancara') {
     $wawancaraSuccessMessage = '';
     $wawancaraErrorMessage = '';
     $wawancaraAction = trim((string)($_POST['wawancara_action'] ?? ''));
-    $wawancaraVotesRaw = load_pemilihan_data();
-    $wawancaraVoteItems = $wawancaraVotesRaw['pemilihan'] ?? [];
-    if (!is_array($wawancaraVoteItems)) {
-        $wawancaraVoteItems = [];
-    }
     $wawancaraFlagMap = load_flagging_map();
     $wawancaraKesediaanFormMap = load_kesediaan_form_map();
     $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
-    $wawancaraEmptyMessage = 'Belum ada kandidat Top 10 untuk ditampilkan.';
-
-    $wawancaraBidangSummary = [];
-    foreach ($wawancaraVoteItems as $voteItem) {
-        if (!is_array($voteItem)) {
-            continue;
-        }
-
-        $bidang = trim((string)($voteItem['bidang'] ?? '-'));
-        if ($bidang === '') {
-            $bidang = '-';
-        }
-
-        $candidateName = trim((string)($voteItem['kandidat']['nama_lengkap'] ?? '-'));
-        if ($candidateName === '') {
-            $candidateName = '-';
-        }
-        $candidateCabang = trim((string)($voteItem['kandidat']['asal_cabang'] ?? '-'));
-        if ($candidateCabang === '') {
-            $candidateCabang = '-';
-        }
-
-        if (!isset($wawancaraBidangSummary[$bidang])) {
-            $wawancaraBidangSummary[$bidang] = [
-                'total' => 0,
-                'candidates' => [],
-            ];
-        }
-
-        $wawancaraBidangSummary[$bidang]['total']++;
-        $candidateKey = $candidateName . '||' . $candidateCabang;
-        if (!isset($wawancaraBidangSummary[$bidang]['candidates'][$candidateKey])) {
-            $wawancaraBidangSummary[$bidang]['candidates'][$candidateKey] = [
-                'nama' => $candidateName,
-                'cabang' => $candidateCabang,
-                'count' => 0,
-            ];
-        }
-        $wawancaraBidangSummary[$bidang]['candidates'][$candidateKey]['count']++;
-    }
-
-    foreach ($wawancaraBidangSummary as $bidang => $summary) {
-        uasort($summary['candidates'], static function (array $a, array $b): int {
-            $countCompare = ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0));
-            if ($countCompare !== 0) {
-                return $countCompare;
-            }
-            return strcmp((string)($a['nama'] ?? ''), (string)($b['nama'] ?? ''));
-        });
-        $sortedCandidates = array_values($summary['candidates']);
-        $topCandidates = array_slice($sortedCandidates, 0, 10);
-        $wawancaraBidangSummary[$bidang]['candidates'] = $sortedCandidates;
-        $wawancaraBidangSummary[$bidang]['candidate_total'] = count($sortedCandidates);
-        $wawancaraBidangSummary[$bidang]['top_candidates'] = $topCandidates;
-    }
-
-    $orderedWawancaraBidangSummary = [];
-    $orderedAssigned = [];
-    $bidangOrder = load_bidang_data();
-    $cabangOrderMap = [];
-    foreach (known_cabang_values() as $idx => $cabangItem) {
-        $cabangKey = normalize_header_key((string)$cabangItem);
-        if ($cabangKey !== '' && !isset($cabangOrderMap[$cabangKey])) {
-            $cabangOrderMap[$cabangKey] = (int)$idx;
-        }
-    }
-
-    foreach ($bidangOrder as $bidangItem) {
-        if (!is_array($bidangItem)) {
-            continue;
-        }
-
-        $orderTitle = trim((string)($bidangItem['title'] ?? ''));
-        if ($orderTitle === '') {
-            continue;
-        }
-
-        if (is_ketua_pengurus_lokal_bidang($orderTitle)) {
-            $kplTitles = [];
-            foreach ($wawancaraBidangSummary as $summaryTitle => $_summaryValue) {
-                if (isset($orderedAssigned[$summaryTitle])) {
-                    continue;
-                }
-                if (is_ketua_pengurus_lokal_bidang((string)$summaryTitle)) {
-                    $kplTitles[] = (string)$summaryTitle;
-                }
-            }
-
-            usort($kplTitles, static function (string $a, string $b) use ($cabangOrderMap): int {
-                $cabangA = normalize_header_key(extract_ketua_pengurus_lokal_cabang($a));
-                $cabangB = normalize_header_key(extract_ketua_pengurus_lokal_cabang($b));
-                $idxA = $cabangOrderMap[$cabangA] ?? PHP_INT_MAX;
-                $idxB = $cabangOrderMap[$cabangB] ?? PHP_INT_MAX;
-                if ($idxA !== $idxB) {
-                    return $idxA <=> $idxB;
-                }
-                return strnatcasecmp($a, $b);
-            });
-
-            foreach ($kplTitles as $kplTitle) {
-                $orderedWawancaraBidangSummary[$kplTitle] = $wawancaraBidangSummary[$kplTitle];
-                $orderedAssigned[$kplTitle] = true;
-            }
-            continue;
-        }
-
-        if (!isset($orderedAssigned[$orderTitle]) && isset($wawancaraBidangSummary[$orderTitle])) {
-            $orderedWawancaraBidangSummary[$orderTitle] = $wawancaraBidangSummary[$orderTitle];
-            $orderedAssigned[$orderTitle] = true;
-        }
-    }
-
-    $remainingTitles = [];
-    foreach ($wawancaraBidangSummary as $summaryTitle => $_summaryValue) {
-        if (!isset($orderedAssigned[$summaryTitle])) {
-            $remainingTitles[] = (string)$summaryTitle;
-        }
-    }
-    natcasesort($remainingTitles);
-    foreach ($remainingTitles as $remainingTitle) {
-        $orderedWawancaraBidangSummary[$remainingTitle] = $wawancaraBidangSummary[$remainingTitle];
-    }
-    $wawancaraBidangSummary = array_filter(
-        $orderedWawancaraBidangSummary,
-        static function (array $summary): bool {
-            return (array)($summary['top_candidates'] ?? []) !== [];
-        }
-    );
+    $wawancaraScorecardBidangAssignmentMap = load_scorecard_bidang_assignment_map();
+    $wawancaraEmptyMessage = 'Belum ada kandidat 100% bersedia untuk ditampilkan.';
+    $wawancaraCandidates = [];
 
     if ($method === 'POST' && $wawancaraAction === 'mark_lanjut_proses') {
         $wawancaraErrorMessage = 'Perubahan status lanjut proses dilakukan dari halaman kandidat admin.';
@@ -9223,13 +9521,19 @@ if ($page === 'wawancara') {
         } elseif (!is_array($rawAnswers) || !is_array($rawSectionNotes)) {
             $wawancaraErrorMessage = 'Data score card tidak valid.';
         } else {
-            $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-            $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
-            $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
-            $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
+            $candidateKesediaanKey = kesediaan_candidate_key($targetKandidatNama, $targetKandidatCabang);
+            $candidateForms = (array)($wawancaraKesediaanFormMap[$candidateKesediaanKey] ?? []);
+            $candidateAssignmentKey = scorecard_bidang_assignment_key($targetKandidatNama, $targetKandidatCabang);
+            $assignedScorecardBidang = trim((string)($wawancaraScorecardBidangAssignmentMap[$candidateAssignmentKey]['scorecard_bidang'] ?? ''));
 
-            if (!$isCandidateLolosScreening) {
-                $wawancaraErrorMessage = 'Score card hanya dapat diisi untuk kandidat yang sudah lolos screening.';
+            if (!is_kesediaan_candidate_forms_complete($candidateForms)) {
+                $wawancaraErrorMessage = 'Score card hanya dapat diisi untuk kandidat yang 100% bersedia.';
+            } elseif ($assignedScorecardBidang === '') {
+                $wawancaraErrorMessage = 'Score card belum dapat diisi karena admin belum menentukan bidang score card kandidat ini.';
+            } elseif ($targetBidang !== $assignedScorecardBidang) {
+                $wawancaraErrorMessage = 'Bidang score card tidak sesuai dengan bidang yang ditentukan admin.';
+            } elseif (!scorecard_is_selectable_bidang_for_candidate($targetBidang, $targetKandidatCabang)) {
+                $wawancaraErrorMessage = 'Bidang score card yang dipilih tidak valid untuk kandidat ini.';
             } else {
                 $saveResult = save_scorecard_submission(
                     $targetBidang,
@@ -9267,13 +9571,19 @@ if ($page === 'wawancara') {
         } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
             $wawancaraErrorMessage = 'Data kandidat tidak valid untuk submit score card.';
         } else {
-            $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-            $candidateFlag = (array)($wawancaraFlagMap[$candidateKey] ?? []);
-            $isCandidateLanjutProses = !empty($candidateFlag['lanjut_proses']);
-            $isCandidateLolosScreening = !empty($candidateFlag['lolos_screening']) && $isCandidateLanjutProses;
+            $candidateKesediaanKey = kesediaan_candidate_key($targetKandidatNama, $targetKandidatCabang);
+            $candidateForms = (array)($wawancaraKesediaanFormMap[$candidateKesediaanKey] ?? []);
+            $candidateAssignmentKey = scorecard_bidang_assignment_key($targetKandidatNama, $targetKandidatCabang);
+            $assignedScorecardBidang = trim((string)($wawancaraScorecardBidangAssignmentMap[$candidateAssignmentKey]['scorecard_bidang'] ?? ''));
 
-            if (!$isCandidateLolosScreening) {
-                $wawancaraErrorMessage = 'Submit score card hanya dapat dilakukan untuk kandidat yang sudah lolos screening.';
+            if (!is_kesediaan_candidate_forms_complete($candidateForms)) {
+                $wawancaraErrorMessage = 'Submit score card hanya dapat dilakukan untuk kandidat yang 100% bersedia.';
+            } elseif ($assignedScorecardBidang === '') {
+                $wawancaraErrorMessage = 'Submit score card belum dapat dilakukan karena admin belum menentukan bidang score card kandidat ini.';
+            } elseif ($targetBidang !== $assignedScorecardBidang) {
+                $wawancaraErrorMessage = 'Bidang score card tidak sesuai dengan bidang yang ditentukan admin.';
+            } elseif (!scorecard_is_selectable_bidang_for_candidate($targetBidang, $targetKandidatCabang)) {
+                $wawancaraErrorMessage = 'Bidang score card yang dipilih tidak valid untuk kandidat ini.';
             } else {
                 $submitResult = submit_scorecard_submission(
                     $targetBidang,
@@ -9292,8 +9602,48 @@ if ($page === 'wawancara') {
         }
     }
 
+    $wawancaraCompleteRows = [];
+    foreach (build_kesediaan_recap_rows($wawancaraKesediaanFormMap) as $rekapRow) {
+        if (is_kesediaan_recap_row_complete($rekapRow)) {
+            $wawancaraCompleteRows[] = $rekapRow;
+        }
+    }
+
+    $wawancaraTemplateBidangTitles = [];
+    foreach ($wawancaraCompleteRows as $rekapRow) {
+        $candidateName = trim((string)($rekapRow['candidate_name'] ?? ''));
+        $candidateCabang = trim((string)($rekapRow['candidate_branch'] ?? ''));
+        if ($candidateName === '') {
+            continue;
+        }
+        if ($candidateCabang === '') {
+            $candidateCabang = '-';
+        }
+
+        $candidateAssignmentKey = scorecard_bidang_assignment_key($candidateName, $candidateCabang);
+        $selectedScorecardBidang = trim((string)($wawancaraScorecardBidangAssignmentMap[$candidateAssignmentKey]['scorecard_bidang'] ?? ''));
+        $selectedScorecardSubmission = [];
+        if ($selectedScorecardBidang !== '') {
+            $wawancaraTemplateBidangTitles[$selectedScorecardBidang] = true;
+            $selectedScorecardKey = flagging_candidate_key($selectedScorecardBidang, $candidateName, $candidateCabang);
+            $selectedScorecardSubmission = (array)($wawancaraScorecardSubmissionMap[$selectedScorecardKey] ?? []);
+        }
+        $candidateScorecardSubmissions = $selectedScorecardSubmission !== [] ? [$selectedScorecardSubmission] : [];
+
+        $wawancaraCandidates[] = [
+            'nama' => $candidateName,
+            'cabang' => $candidateCabang,
+            'total_forms' => (int)($rekapRow['total_forms'] ?? 0),
+            'bersedia_count' => (int)($rekapRow['bersedia_count'] ?? 0),
+            'latest_updated_at' => (string)($rekapRow['latest_updated_at'] ?? '-'),
+            'scorecard_selected_bidang' => $selectedScorecardBidang,
+            'scorecard_submissions' => $candidateScorecardSubmissions,
+            'scorecard_submission_payloads_by_bidang' => scorecard_submission_payloads_by_bidang($candidateScorecardSubmissions),
+        ];
+    }
+
     $wawancaraScorecardTemplatesByBidang = [];
-    foreach ($wawancaraBidangSummary as $bidang => $_summary) {
+    foreach (array_keys($wawancaraTemplateBidangTitles) as $bidang) {
         $resolvedTemplate = find_scorecard_template_for_bidang((string)$bidang);
         if ($resolvedTemplate === null) {
             continue;
@@ -9433,12 +9783,18 @@ if ($page === 'wawancara') {
                 padding: 14px;
                 background: #fff;
             }
+            .wawancara-full-card {
+                grid-column: 1 / -1;
+            }
             .rekap-head {
                 display: flex;
                 justify-content: space-between;
                 align-items: baseline;
                 gap: 8px;
                 margin-bottom: 10px;
+            }
+            .rekap-head.count-only {
+                justify-content: flex-end;
             }
             .rekap-title {
                 margin: 0;
@@ -10144,257 +10500,188 @@ if ($page === 'wawancara') {
                 <?php if ($wawancaraErrorMessage !== ''): ?>
                     <div class="wawancara-alert error"><?= h($wawancaraErrorMessage) ?></div>
                 <?php endif; ?>
-                <?php if ($wawancaraBidangSummary === []): ?>
+                <?php if ($wawancaraCandidates === []): ?>
                     <p class="empty"><?= h($wawancaraEmptyMessage) ?></p>
                 <?php else: ?>
                     <div class="wawancara-filter-bar">
                         <p class="wawancara-filter-label" data-i18n="wawancara_filter_label">Filter proses kandidat</p>
                         <select class="wawancara-filter-select" id="wawancaraProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="wawancara_filter_label">
                             <option value="all" <?= $wawancaraProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
-                            <option value="belum_lanjut" <?= $wawancaraProcessFilter === 'belum_lanjut' ? 'selected' : '' ?> data-i18n="filter_not_advanced">Belum Lanjut Proses</option>
-                            <option value="lanjut" <?= $wawancaraProcessFilter === 'lanjut' ? 'selected' : '' ?> data-i18n="filter_advanced">Lanjut Proses</option>
-                            <option value="screening" <?= $wawancaraProcessFilter === 'screening' ? 'selected' : '' ?> data-i18n="filter_screening">Lolos Screening</option>
+                            <option value="scorecard_empty" <?= $wawancaraProcessFilter === 'scorecard_empty' ? 'selected' : '' ?> data-i18n="filter_scorecard_empty">Belum Ada Score Card</option>
+                            <option value="scorecard_draft" <?= $wawancaraProcessFilter === 'scorecard_draft' ? 'selected' : '' ?> data-i18n="filter_scorecard_draft">Score Card Draft</option>
                             <option value="scorecard_submitted" <?= $wawancaraProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?> data-i18n="filter_scorecard_submitted">Sudah Submit Score Card</option>
                         </select>
                     </div>
                     <div class="wawancara-filter-empty" id="wawancaraFilterEmpty" data-i18n="wawancara_filter_empty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
                     <div class="rekap-grid">
-                        <?php foreach ($wawancaraBidangSummary as $bidang => $summary): ?>
-                            <?php
-                            $wawancaraBidangParts = bidang_title_parts((string)$bidang);
-                            $wawancaraMainTitle = (string)($wawancaraBidangParts['main'] ?? (string)$bidang);
-                                if ($wawancaraMainTitle === '') {
-                                    $wawancaraMainTitle = (string)$bidang;
-                                }
-                                $wawancaraCabangTitle = (string)($wawancaraBidangParts['cabang'] ?? '');
-                            ?>
-                            <article class="rekap-card" data-wawancara-card="1">
-                                <div class="rekap-head">
-                                    <h2 class="rekap-title">
-                                        <span data-lang-text-id="<?= h($wawancaraMainTitle) ?>" data-lang-text-en="<?= h(bidang_translate_main_title($wawancaraMainTitle, 'en')) ?>"><?= h($wawancaraMainTitle) ?></span>
-                                        <?php if ($wawancaraCabangTitle !== ''): ?>
-                                            <span class="rekap-title-sub"><?= h($wawancaraCabangTitle) ?></span>
-                                        <?php endif; ?>
-                                    </h2>
-                                    <p class="rekap-total" data-i18n="dashboard_rekap_total_votes" data-i18n-vars="<?= h((string)json_encode(['count' => (string)($summary['total'] ?? 0)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)($summary['total'] ?? 0)) ?> vote</p>
-                                </div>
-                                <?php if ((array)($summary['top_candidates'] ?? []) === []): ?>
-                                    <p class="empty" data-i18n="wawancara_empty_candidates">Belum ada kandidat pada bidang ini.</p>
-                                <?php else: ?>
-                                    <ul class="candidate-list">
-                                        <?php foreach ((array)($summary['top_candidates'] ?? []) as $index => $candidate): ?>
-                                            <?php
-                                            $wawancaraCandidateName = (string)($candidate['nama'] ?? '-');
-                                            $wawancaraCandidateCabang = (string)($candidate['cabang'] ?? '-');
-                                            $wawancaraCandidateCount = (int)($candidate['count'] ?? 0);
-                                            $wawancaraCandidateKey = flagging_candidate_key((string)$bidang, $wawancaraCandidateName, $wawancaraCandidateCabang);
-                                            $wawancaraCandidateFlag = (array)($wawancaraFlagMap[$wawancaraCandidateKey] ?? []);
-                                            $isWawancaraLanjut = !empty($wawancaraCandidateFlag['lanjut_proses']);
-                                            $isWawancaraScreening = !empty($wawancaraCandidateFlag['lolos_screening']) && $isWawancaraLanjut;
-                                            $wawancaraKesediaanKey = kesediaan_candidate_key($wawancaraCandidateName, $wawancaraCandidateCabang);
-                                            $wawancaraCandidateForms = (array)($wawancaraKesediaanFormMap[$wawancaraKesediaanKey] ?? []);
-                                            $wawancaraTotalFormCount = 0;
-                                            $wawancaraBersediaCount = 0;
-                                            foreach ($wawancaraCandidateForms as $wawancaraKesediaanItemRaw) {
-                                                if (!is_array($wawancaraKesediaanItemRaw)) {
-                                                    continue;
-                                                }
-                                                $wawancaraKesediaanStatus = normalize_kesediaan_status((string)($wawancaraKesediaanItemRaw['status_kesediaan'] ?? ''));
-                                                if ($wawancaraKesediaanStatus === '') {
-                                                    continue;
-                                                }
-                                                $wawancaraTotalFormCount++;
-                                                if ($wawancaraKesediaanStatus === 'bersedia') {
-                                                    $wawancaraBersediaCount++;
-                                                }
-                                            }
-                                            $wawancaraFormExists = $wawancaraTotalFormCount > 0;
-                                            $wawancaraKesediaanBadgeText = 'Belum Bersedia';
-                                            $wawancaraKesediaanBadgeTextEn = 'Not Yet Willing';
-                                            $wawancaraKesediaanBadgeClass = ' kesediaan-empty';
-                                            if ($wawancaraFormExists) {
-                                                $wawancaraKesediaanBadgeText = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' bersedia';
-                                                $wawancaraKesediaanBadgeTextEn = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' willing';
-                                                $wawancaraKesediaanBadgeClass = $wawancaraBersediaCount >= $wawancaraTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
-                                            }
-                                            $canInputKesediaanForm = !$isWawancaraLanjut;
-                                            $wawancaraFormKesediaanTitle = $canInputKesediaanForm
-                                                ? 'Lihat dokumen sementara kandidat'
-                                                : 'Form kesediaan terkunci karena kandidat sudah lanjut proses';
-                                            $wawancaraFormKesediaanTitleEn = $canInputKesediaanForm
-                                                ? 'View temporary candidate document'
-                                                : 'Consent form is locked because the candidate has already advanced';
-                                            $wawancaraLockedPihakUsed = kesediaan_used_single_submit_hubungan($wawancaraCandidateForms);
-                                            $wawancaraLockedPihakUsedJsonRaw = json_encode(array_values($wawancaraLockedPihakUsed), JSON_UNESCAPED_UNICODE);
-                                            if (!is_string($wawancaraLockedPihakUsedJsonRaw)) {
-                                                $wawancaraLockedPihakUsedJsonRaw = '[]';
-                                            }
-                                            $wawancaraLockedPihakUsedJson = h($wawancaraLockedPihakUsedJsonRaw);
-                                            $wawancaraScorecardSubmission = (array)($wawancaraScorecardSubmissionMap[$wawancaraCandidateKey] ?? []);
-                                            $wawancaraHasScorecard = $wawancaraScorecardSubmission !== [];
-                                            $wawancaraScorecardSubmitted = !empty($wawancaraScorecardSubmission['is_submitted']);
-                                            $wawancaraScorecardFinalScore = $wawancaraHasScorecard
-                                                ? round((float)($wawancaraScorecardSubmission['final_score'] ?? 0), 2)
-                                                : 0.0;
-                                            $wawancaraScorecardBadgeText = 'Skor Akhir: ' . ($wawancaraHasScorecard
-                                                ? number_format($wawancaraScorecardFinalScore, 2, '.', '')
-                                                : '0');
-                                            $wawancaraScorecardBadgeClass = $wawancaraHasScorecard ? ' scorecard-on' : ' scorecard-empty';
-                                            $wawancaraScorecardSubmissionPayload = $wawancaraHasScorecard
-                                                ? scorecard_submission_client_payload($wawancaraScorecardSubmission)
-                                                : [];
-                                            $wawancaraScorecardSubmissionJsonRaw = json_encode($wawancaraScorecardSubmissionPayload, JSON_UNESCAPED_UNICODE);
-                                            if (!is_string($wawancaraScorecardSubmissionJsonRaw)) {
-                                                $wawancaraScorecardSubmissionJsonRaw = '{}';
-                                            }
-                                            $wawancaraScorecardSubmissionJson = h($wawancaraScorecardSubmissionJsonRaw);
-                                            $wawancaraFormItems = [];
-                                            foreach ($wawancaraCandidateForms as $wawancaraFormItemRaw) {
-                                                if (!is_array($wawancaraFormItemRaw)) {
-                                                    continue;
-                                                }
-                                                $wawancaraFormStatusRaw = (string)($wawancaraFormItemRaw['status_kesediaan'] ?? '');
-                                                $wawancaraFormStatusLabel = match ($wawancaraFormStatusRaw) {
-                                                    'bersedia' => 'Bersedia',
-                                                    'tidak_bersedia' => 'Tidak Bersedia',
-                                                    default => '-',
-                                                };
-                                                $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_name_original'] ?? ''));
-                                                if ($wawancaraFormFileName === '') {
-                                                    $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_path'] ?? '-'));
-                                                }
-                                                $wawancaraFormFileUrl = kesediaan_form_view_url($wawancaraFormItemRaw);
-                                                $wawancaraFormDownloadUrl = kesediaan_form_view_url($wawancaraFormItemRaw, true);
-                                                $wawancaraFormIsImage = kesediaan_form_is_image_document($wawancaraFormItemRaw);
-                                                $wawancaraFormIsPdf = kesediaan_form_is_pdf_document($wawancaraFormItemRaw);
-                                                $wawancaraFormItems[] = [
-                                                    'hubungan' => (string)($wawancaraFormItemRaw['hubungan'] ?? '-'),
-                                                    'nama_pihak' => (string)($wawancaraFormItemRaw['nama_pihak'] ?? '-'),
-                                                    'status' => $wawancaraFormStatusLabel,
-                                                    'alasan' => (string)($wawancaraFormItemRaw['alasan'] ?? ''),
-                                                    'file' => $wawancaraFormFileName,
-                                                    'file_url' => $wawancaraFormFileUrl,
-                                                    'file_download_url' => $wawancaraFormDownloadUrl,
-                                                    'file_is_image' => $wawancaraFormIsImage,
-                                                    'file_is_pdf' => $wawancaraFormIsPdf,
-                                                    'updated_at' => trim((string)($wawancaraFormItemRaw['updated_at'] ?? '-')),
-                                                ];
-                                            }
-                                            $wawancaraFormItemsJson = h((string)json_encode($wawancaraFormItems, JSON_UNESCAPED_UNICODE));
-                                            ?>
-                                            <li
-                                                class="candidate-item"
-                                                data-process-lanjut="<?= $isWawancaraLanjut ? '1' : '0' ?>"
-                                                data-process-screening="<?= $isWawancaraScreening ? '1' : '0' ?>"
-                                                data-process-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                        <article class="rekap-card wawancara-full-card" data-wawancara-card="1">
+                            <div class="rekap-head count-only">
+                                <p class="rekap-total" data-i18n="wawancara_candidates_count" data-i18n-vars="<?= h((string)json_encode(['count' => (string)count($wawancaraCandidates)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)count($wawancaraCandidates)) ?> kandidat</p>
+                            </div>
+                            <ul class="candidate-list">
+                                <?php foreach ($wawancaraCandidates as $index => $candidate): ?>
+                                    <?php
+                                    $wawancaraCandidateName = (string)($candidate['nama'] ?? '-');
+                                    $wawancaraCandidateCabang = (string)($candidate['cabang'] ?? '-');
+                                    $wawancaraTotalFormCount = (int)($candidate['total_forms'] ?? 0);
+                                    $wawancaraBersediaCount = (int)($candidate['bersedia_count'] ?? 0);
+                                    $wawancaraKesediaanBadgeText = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' bersedia';
+                                    $wawancaraKesediaanBadgeTextEn = $wawancaraBersediaCount . '/' . $wawancaraTotalFormCount . ' willing';
+                                    $wawancaraKesediaanBadgeClass = ' kesediaan-complete';
+                                    $wawancaraKesediaanKey = kesediaan_candidate_key($wawancaraCandidateName, $wawancaraCandidateCabang);
+                                    $wawancaraCandidateForms = (array)($wawancaraKesediaanFormMap[$wawancaraKesediaanKey] ?? []);
+                                    $wawancaraFormExists = $wawancaraCandidateForms !== [];
+                                    $wawancaraScorecardSubmissions = (array)($candidate['scorecard_submissions'] ?? []);
+                                    $wawancaraScorecardSubmission = isset($wawancaraScorecardSubmissions[0]) && is_array($wawancaraScorecardSubmissions[0])
+                                        ? $wawancaraScorecardSubmissions[0]
+                                        : [];
+                                    $wawancaraHasScorecard = $wawancaraScorecardSubmission !== [];
+                                    $wawancaraScorecardSubmitted = !empty($wawancaraScorecardSubmission['is_submitted']);
+                                    $wawancaraSelectedScorecardBidang = trim((string)($candidate['scorecard_selected_bidang'] ?? ''));
+                                    $wawancaraScorecardFinalScore = $wawancaraHasScorecard
+                                        ? round((float)($wawancaraScorecardSubmission['final_score'] ?? 0), 2)
+                                        : 0.0;
+                                    $wawancaraScorecardBadgeText = $wawancaraHasScorecard
+                                        ? ($wawancaraScorecardSubmitted ? 'Sudah Submit Score Card' : 'Skor Akhir: ' . number_format($wawancaraScorecardFinalScore, 2, '.', ''))
+                                        : 'Belum Ada Score Card';
+                                    $wawancaraScorecardBadgeTextEn = $wawancaraHasScorecard
+                                        ? ($wawancaraScorecardSubmitted ? 'Score Card Submitted' : 'Final Score: ' . number_format($wawancaraScorecardFinalScore, 2, '.', ''))
+                                        : 'No Score Card Yet';
+                                    $wawancaraScorecardBadgeClass = $wawancaraHasScorecard ? ' scorecard-on' : ' scorecard-empty';
+                                    $wawancaraBidangBadgeText = $wawancaraSelectedScorecardBidang !== ''
+                                        ? 'Bidang: ' . $wawancaraSelectedScorecardBidang
+                                        : 'Bidang belum ditentukan admin';
+                                    $wawancaraBidangBadgeTextEn = $wawancaraSelectedScorecardBidang !== ''
+                                        ? 'Position: ' . $wawancaraSelectedScorecardBidang
+                                        : 'Position not assigned by admin yet';
+                                    $wawancaraScorecardButtonDisabled = $wawancaraSelectedScorecardBidang === '';
+                                    $wawancaraScorecardButtonTitle = $wawancaraScorecardButtonDisabled
+                                        ? 'Admin belum menentukan bidang score card kandidat ini'
+                                        : ($wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini'));
+                                    $wawancaraScorecardButtonTitleEn = $wawancaraScorecardButtonDisabled
+                                        ? 'The admin has not assigned this candidate\'s score card position yet'
+                                        : ($wawancaraScorecardSubmitted ? 'View this candidate\'s score card' : ($wawancaraHasScorecard ? 'Edit this candidate\'s score card' : 'Input this candidate\'s score card'));
+                                    $wawancaraScorecardButtonLabel = $wawancaraScorecardButtonDisabled
+                                        ? 'Bidang Belum Ditentukan'
+                                        : ($wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card'));
+                                    $wawancaraScorecardButtonLabelEn = $wawancaraScorecardButtonDisabled
+                                        ? 'Position Not Assigned'
+                                        : ($wawancaraScorecardSubmitted ? 'View Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card'));
+                                    $wawancaraScorecardSubmissionPayloadsRaw = json_encode((array)($candidate['scorecard_submission_payloads_by_bidang'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                                    if (!is_string($wawancaraScorecardSubmissionPayloadsRaw)) {
+                                        $wawancaraScorecardSubmissionPayloadsRaw = '{}';
+                                    }
+                                    $wawancaraFormItems = [];
+                                    foreach ($wawancaraCandidateForms as $wawancaraFormItemRaw) {
+                                        if (!is_array($wawancaraFormItemRaw)) {
+                                            continue;
+                                        }
+                                        $wawancaraFormStatusRaw = (string)($wawancaraFormItemRaw['status_kesediaan'] ?? '');
+                                        $wawancaraFormStatusLabel = match ($wawancaraFormStatusRaw) {
+                                            'bersedia' => 'Bersedia',
+                                            'tidak_bersedia' => 'Tidak Bersedia',
+                                            default => '-',
+                                        };
+                                        $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_name_original'] ?? ''));
+                                        if ($wawancaraFormFileName === '') {
+                                            $wawancaraFormFileName = trim((string)($wawancaraFormItemRaw['file_path'] ?? '-'));
+                                        }
+                                        $wawancaraFormItems[] = [
+                                            'hubungan' => (string)($wawancaraFormItemRaw['hubungan'] ?? '-'),
+                                            'nama_pihak' => (string)($wawancaraFormItemRaw['nama_pihak'] ?? '-'),
+                                            'status' => $wawancaraFormStatusLabel,
+                                            'alasan' => (string)($wawancaraFormItemRaw['alasan'] ?? ''),
+                                            'file' => $wawancaraFormFileName,
+                                            'file_url' => kesediaan_form_view_url($wawancaraFormItemRaw),
+                                            'file_download_url' => kesediaan_form_view_url($wawancaraFormItemRaw, true),
+                                            'file_is_image' => kesediaan_form_is_image_document($wawancaraFormItemRaw),
+                                            'file_is_pdf' => kesediaan_form_is_pdf_document($wawancaraFormItemRaw),
+                                            'updated_at' => trim((string)($wawancaraFormItemRaw['updated_at'] ?? '-')),
+                                        ];
+                                    }
+                                    $wawancaraFormItemsJson = h((string)json_encode($wawancaraFormItems, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                                    ?>
+                                    <li
+                                        class="candidate-item"
+                                        data-process-scorecard-has="<?= $wawancaraHasScorecard ? '1' : '0' ?>"
+                                        data-process-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                                    >
+                                        <div class="candidate-main">
+                                            #<?= h((string)($index + 1)) ?> -
+                                            <?= h_name($wawancaraCandidateName) ?>
+                                            (<?= h($wawancaraCandidateCabang) ?>)
+                                            - <span data-i18n="wawancara_forms_count" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$wawancaraTotalFormCount], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)$wawancaraTotalFormCount) ?> form kesediaan</span>
+                                        </div>
+                                        <div class="flag-state">
+                                            <span class="flag-badge<?= h($wawancaraKesediaanBadgeClass) ?>">
+                                                <span data-lang-text-id="<?= h($wawancaraKesediaanBadgeText) ?>" data-lang-text-en="<?= h($wawancaraKesediaanBadgeTextEn) ?>"><?= h($wawancaraKesediaanBadgeText) ?></span>
+                                            </span>
+                                            <span class="flag-badge<?= h($wawancaraScorecardBadgeClass) ?>">
+                                                <span data-lang-text-id="<?= h($wawancaraScorecardBadgeText) ?>" data-lang-text-en="<?= h($wawancaraScorecardBadgeTextEn) ?>"><?= h($wawancaraScorecardBadgeText) ?></span>
+                                            </span>
+                                            <span class="flag-badge">
+                                                <span data-lang-text-id="<?= h($wawancaraBidangBadgeText) ?>" data-lang-text-en="<?= h($wawancaraBidangBadgeTextEn) ?>"><?= h($wawancaraBidangBadgeText) ?></span>
+                                            </span>
+                                        </div>
+                                        <div class="candidate-doc-action">
+                                            <button
+                                                class="doc-icon-btn"
+                                                type="button"
+                                                data-lang-title-id="<?= h($wawancaraScorecardButtonTitle) ?>"
+                                                data-lang-title-en="<?= h($wawancaraScorecardButtonTitleEn) ?>"
+                                                title="<?= h($wawancaraScorecardButtonTitle) ?>"
+                                                data-candidate-bidang="<?= h($wawancaraSelectedScorecardBidang) ?>"
+                                                data-candidate-name="<?= h($wawancaraCandidateName) ?>"
+                                                data-candidate-cabang="<?= h($wawancaraCandidateCabang) ?>"
+                                                data-scorecard-submissions="<?= h($wawancaraScorecardSubmissionPayloadsRaw) ?>"
+                                                onclick="showScoreCardModal(this)"
+                                                <?= $wawancaraScorecardButtonDisabled ? 'disabled' : '' ?>
                                             >
-                                                <div class="candidate-main">
-                                                    #<?= h((string)($index + 1)) ?> -
-                                                    <?= h_name($wawancaraCandidateName) ?>
-                                                    (<?= h($wawancaraCandidateCabang) ?>)
-                                                    - <span data-i18n="wawancara_votes_count" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$wawancaraCandidateCount], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)$wawancaraCandidateCount) ?> suara</span>
-                                                </div>
-                                                <div class="flag-state">
-                                                    <span class="flag-badge<?= h($wawancaraKesediaanBadgeClass) ?>">
-                                                        <span data-lang-text-id="<?= h($wawancaraKesediaanBadgeText) ?>" data-lang-text-en="<?= h($wawancaraKesediaanBadgeTextEn) ?>"><?= h($wawancaraKesediaanBadgeText) ?></span>
-                                                    </span>
-                                                    <?php if (!$isWawancaraScreening && $isWawancaraLanjut): ?>
-                                                    <span class="flag-badge<?= $isWawancaraLanjut ? ' on' : '' ?>" data-i18n="<?= h($isWawancaraLanjut ? 'filter_advanced' : 'filter_not_advanced') ?>">
-                                                        <?= $isWawancaraLanjut ? 'Lanjut Proses' : 'Belum Lanjut Proses' ?>
-                                                    </span>
-                                                    <?php endif; ?>
-                                                    <?php if ($isWawancaraScreening): ?>
-                                                    <span class="flag-badge on screening-on" data-i18n="filter_screening">
-                                                        Lolos Screening
-                                                    </span>
-                                                    <span class="flag-badge<?= h($wawancaraScorecardBadgeClass) ?>">
-                                                        <span data-lang-text-id="<?= h($wawancaraScorecardBadgeText) ?>" data-lang-text-en="<?= h('Final Score: ' . ($wawancaraHasScorecard ? number_format($wawancaraScorecardFinalScore, 2, '.', '') : '0')) ?>"><?= h($wawancaraScorecardBadgeText) ?></span>
-                                                    </span>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <div class="candidate-doc-action">
-                                                    <?php if ($isWawancaraScreening): ?>
-                                                        <button
-                                                            class="doc-icon-btn"
-                                                            type="button"
-                                                            data-lang-title-id="<?= h($wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini')) ?>"
-                                                            data-lang-title-en="<?= h($wawancaraScorecardSubmitted ? 'View this candidate\'s score card' : ($wawancaraHasScorecard ? 'Edit this candidate\'s score card' : 'Input this candidate\'s score card')) ?>"
-                                                            title="<?= $wawancaraScorecardSubmitted ? 'Lihat score card kandidat ini' : ($wawancaraHasScorecard ? 'Edit score card kandidat ini' : 'Input score card kandidat ini') ?>"
-                                                            data-candidate-bidang="<?= h((string)$bidang) ?>"
-                                                            data-candidate-name="<?= h($wawancaraCandidateName) ?>"
-                                                            data-candidate-cabang="<?= h($wawancaraCandidateCabang) ?>"
-                                                            data-scorecard-submission="<?= $wawancaraScorecardSubmissionJson ?>"
-                                                            data-scorecard-readonly="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
-                                                            data-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
-                                                            onclick="showScoreCardModal(this)"
-                                                        >
-                                                            <span class="doc-icon" aria-hidden="true">&#128203;</span>
-                                                            <span class="doc-label" data-lang-text-id="<?= h($wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card')) ?>" data-lang-text-en="<?= h($wawancaraScorecardSubmitted ? 'View Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card')) ?>"><?= $wawancaraScorecardSubmitted ? 'Lihat Score Card' : ($wawancaraHasScorecard ? 'Edit Score Card' : 'Input Score Card') ?></span>
-                                                        </button>
-                                                    <?php else: ?>
-                                                        <button
-                                                            class="doc-icon-btn"
-                                                            type="button"
-                                                            data-lang-title-id="<?= h($wawancaraFormKesediaanTitle) ?>"
-                                                            data-lang-title-en="<?= h($wawancaraFormKesediaanTitleEn) ?>"
-                                                            title="<?= h($wawancaraFormKesediaanTitle) ?>"
-                                                            data-candidate-bidang="<?= h((string)$bidang) ?>"
-                                                            data-candidate-name="<?= h($wawancaraCandidateName) ?>"
-                                                            data-candidate-cabang="<?= h($wawancaraCandidateCabang) ?>"
-                                                            data-used-locked-pihak="<?= $wawancaraLockedPihakUsedJson ?>"
-                                                            onclick="showTemporaryCandidatePopup(this)"
-                                                            <?= $canInputKesediaanForm ? '' : 'disabled' ?>
-                                                        >
-                                                            <span class="doc-icon" aria-hidden="true">&#128196;</span>
-                                                            <span class="doc-label" data-i18n="wawancara_form_consent">Form Kesediaan</span>
-                                                        </button>
-                                                    <?php endif; ?>
-                                                    <button
-                                                        class="doc-icon-btn secondary"
-                                                        type="button"
-                                                        data-lang-title-id="<?= h($wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput') ?>"
-                                                        data-lang-title-en="<?= h($wawancaraFormExists ? 'View submitted consent forms' : 'No consent forms have been submitted yet') ?>"
-                                                        title="<?= $wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput' ?>"
-                                                        data-candidate-name="<?= h($wawancaraCandidateName) ?>"
-                                                        data-form-exists="<?= $wawancaraFormExists ? '1' : '0' ?>"
-                                                        data-form-items="<?= $wawancaraFormItemsJson ?>"
-                                                        onclick="showExistingKesediaanFormModal(this)"
-                                                        <?= $wawancaraFormExists ? '' : 'disabled' ?>
-                                                    >
-                                                        <span class="doc-icon" aria-hidden="true">&#128065;</span>
-                                                        <span class="doc-label" data-i18n="wawancara_view_form">Lihat Form</span>
-                                                    </button>
-                                                    <?php if ($isWawancaraScreening): ?>
-                                                        <form
-                                                            class="doc-action-form"
-                                                            method="post"
-                                                            action="<?= h(app_index_url($wawancaraPageParams)) ?>"
-                                                            onsubmit="return confirm(window.majelisLang && typeof window.majelisLang.t === 'function' ? window.majelisLang.t('wawancara_submit_confirm', {}, 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?') : 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?')"
-                                                        >
-                                                            <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
-                                                            <input type="hidden" name="wawancara_action" value="submit_scorecard">
-                                                            <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
-                                                            <input type="hidden" name="target_kandidat_nama" value="<?= h($wawancaraCandidateName) ?>">
-                                                            <input type="hidden" name="target_kandidat_cabang" value="<?= h($wawancaraCandidateCabang) ?>">
-                                                            <button
-                                                                class="doc-scorecard-submit-btn"
-                                                                type="submit"
-                                                                data-lang-title-id="<?= h($wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.')) ?>"
-                                                                data-lang-title-en="<?= h($wawancaraScorecardSubmitted ? 'This score card has already been submitted.' : ($wawancaraHasScorecard ? 'Submit this candidate\'s score card.' : 'Fill in the score card before submitting.')) ?>"
-                                                                title="<?= $wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.') ?>"
-                                                                <?= (!$wawancaraHasScorecard || $wawancaraScorecardSubmitted) ? 'disabled' : '' ?>
-                                                            >
-                                                                <span data-lang-text-id="<?= h($wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card') ?>" data-lang-text-en="<?= h($wawancaraScorecardSubmitted ? 'Submitted' : 'Submit Score Card') ?>"><?= $wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card' ?></span>
-                                                            </button>
-                                                        </form>
-                                                    <?php endif; ?>
-                                                </div>
-                                            </li>
-                                        <?php endforeach; ?>
-                                    </ul>
-                                <?php endif; ?>
-                            </article>
-                        <?php endforeach; ?>
+                                                <span class="doc-icon" aria-hidden="true">&#128203;</span>
+                                                <span class="doc-label" data-lang-text-id="<?= h($wawancaraScorecardButtonLabel) ?>" data-lang-text-en="<?= h($wawancaraScorecardButtonLabelEn) ?>"><?= h($wawancaraScorecardButtonLabel) ?></span>
+                                            </button>
+                                            <button
+                                                class="doc-icon-btn secondary"
+                                                type="button"
+                                                data-lang-title-id="<?= h($wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput') ?>"
+                                                data-lang-title-en="<?= h($wawancaraFormExists ? 'View submitted consent forms' : 'No consent forms have been submitted yet') ?>"
+                                                title="<?= $wawancaraFormExists ? 'Lihat form kesediaan yang sudah diinput' : 'Belum ada form kesediaan yang diinput' ?>"
+                                                data-candidate-name="<?= h($wawancaraCandidateName) ?>"
+                                                data-form-exists="<?= $wawancaraFormExists ? '1' : '0' ?>"
+                                                data-form-items="<?= $wawancaraFormItemsJson ?>"
+                                                onclick="showExistingKesediaanFormModal(this)"
+                                                <?= $wawancaraFormExists ? '' : 'disabled' ?>
+                                            >
+                                                <span class="doc-icon" aria-hidden="true">&#128065;</span>
+                                                <span class="doc-label" data-i18n="wawancara_view_form">Lihat Form</span>
+                                            </button>
+                                            <form
+                                                class="doc-action-form"
+                                                method="post"
+                                                action="<?= h(app_index_url($wawancaraPageParams)) ?>"
+                                                onsubmit="return confirm(window.majelisLang && typeof window.majelisLang.t === 'function' ? window.majelisLang.t('wawancara_submit_confirm', {}, 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?') : 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?')"
+                                            >
+                                                <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
+                                                <input type="hidden" name="wawancara_action" value="submit_scorecard">
+                                                <input type="hidden" name="target_bidang" value="<?= h($wawancaraSelectedScorecardBidang) ?>">
+                                                <input type="hidden" name="target_kandidat_nama" value="<?= h($wawancaraCandidateName) ?>">
+                                                <input type="hidden" name="target_kandidat_cabang" value="<?= h($wawancaraCandidateCabang) ?>">
+                                                <button
+                                                    class="doc-scorecard-submit-btn"
+                                                    type="submit"
+                                                    data-lang-title-id="<?= h($wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.')) ?>"
+                                                    data-lang-title-en="<?= h($wawancaraScorecardSubmitted ? 'This score card has already been submitted.' : ($wawancaraHasScorecard ? 'Submit this candidate\'s score card.' : 'Fill in the score card before submitting.')) ?>"
+                                                    title="<?= $wawancaraScorecardSubmitted ? 'Score card sudah disubmit.' : ($wawancaraHasScorecard ? 'Submit score card kandidat ini.' : 'Isi score card terlebih dahulu sebelum submit.') ?>"
+                                                    <?= (!$wawancaraHasScorecard || $wawancaraScorecardSubmitted || $wawancaraSelectedScorecardBidang === '') ? 'disabled' : '' ?>
+                                                >
+                                                    <span data-lang-text-id="<?= h($wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card') ?>" data-lang-text-en="<?= h($wawancaraScorecardSubmitted ? 'Submitted' : 'Submit Score Card') ?>"><?= $wawancaraScorecardSubmitted ? 'Sudah Submit' : 'Submit Score Card' ?></span>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </article>
                     </div>
                 <?php endif; ?>
             </section>
@@ -10402,7 +10689,7 @@ if ($page === 'wawancara') {
         <div class="doc-modal" id="candidateDocModal" role="dialog" aria-modal="true" aria-labelledby="candidate-doc-title">
             <div class="doc-modal-panel">
                 <h2 class="doc-modal-title" id="candidate-doc-title" data-i18n="wawancara_consent_title">Form Kesediaan</h2>
-                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_doc_label">Kandidat: <strong id="candidateDocName">-</strong></p>
+                <p class="doc-modal-text"><span data-i18n="wawancara_candidate_doc_label">Kandidat:</span> <strong id="candidateDocName">-</strong></p>
                 <form class="doc-modal-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" enctype="multipart/form-data" id="candidateDocForm">
                     <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
                     <input type="hidden" name="wawancara_action" value="save_kesediaan_form">
@@ -10477,7 +10764,7 @@ if ($page === 'wawancara') {
         <div class="doc-modal" id="candidateViewModal" role="dialog" aria-modal="true" aria-labelledby="candidate-view-title">
             <div class="doc-modal-panel view">
                 <h2 class="doc-modal-title" id="candidate-view-title" data-i18n="wawancara_view_consent_title">Lihat Form Kesediaan</h2>
-                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_view_label">Kandidat: <strong id="candidateViewName">-</strong></p>
+                <p class="doc-modal-text"><span data-i18n="wawancara_candidate_view_label">Kandidat:</span> <strong id="candidateViewName">-</strong></p>
                 <div id="candidateViewRecap" class="doc-view-recap" style="display:none;">
                     <p class="doc-view-recap-title" data-i18n="wawancara_consent_recap_title">Rekap Pengisi Form</p>
                     <div class="doc-view-recap-table-wrap">
@@ -10506,8 +10793,8 @@ if ($page === 'wawancara') {
         <div class="doc-modal" id="candidateScoreCardModal" role="dialog" aria-modal="true" aria-labelledby="candidate-scorecard-title">
             <div class="doc-modal-panel scorecard">
                 <h2 class="doc-modal-title" id="candidate-scorecard-title" data-i18n="wawancara_input_scorecard">Input Score Card</h2>
-                <p class="doc-modal-text" data-i18n-html="wawancara_candidate_scorecard_label">Kandidat: <strong id="candidateScoreCardName">-</strong></p>
-                <p class="doc-modal-text" data-i18n-html="wawancara_position_label">Bidang: <strong id="candidateScoreCardBidangName">-</strong></p>
+                <p class="doc-modal-text"><span data-i18n="wawancara_candidate_scorecard_label">Kandidat:</span> <strong id="candidateScoreCardName">-</strong></p>
+                <p class="doc-modal-text"><span data-i18n="wawancara_position_label">Bidang:</span> <strong id="candidateScoreCardBidangName">-</strong></p>
                 <form class="doc-modal-form scorecard-form" method="post" action="<?= h(app_index_url($wawancaraPageParams)) ?>" id="candidateScoreCardForm">
                     <input type="hidden" name="csrf_token" value="<?= h($wawancaraCsrfToken) ?>">
                     <input type="hidden" name="wawancara_action" value="save_scorecard">
@@ -10622,6 +10909,7 @@ if ($page === 'wawancara') {
             const singleSubmitPihakSet = new Set(['Diri Sendiri (Kandidat)', 'Ibu', 'Ayah']);
             let activeScoreCardTemplate = null;
             let activeScoreCardReadOnly = false;
+            let activeScoreCardSubmissionsByBidang = {};
 
             function t(key, fallback, vars) {
                 if (window.majelisLang && typeof window.majelisLang.t === 'function') {
@@ -10907,14 +11195,14 @@ if ($page === 'wawancara') {
                 return formatScoreCardNumber(numericWeight * 100).replace(/\.00$/, '') + '%';
             }
 
-            function parseScoreCardSubmission(buttonElement) {
+            function parseScoreCardSubmissionMap(buttonElement) {
                 if (!buttonElement) {
                     return {};
                 }
 
                 try {
-                    const decoded = JSON.parse(buttonElement.dataset.scorecardSubmission || '{}');
-                    return decoded && typeof decoded === 'object' ? decoded : {};
+                    const decoded = JSON.parse(buttonElement.dataset.scorecardSubmissions || '{}');
+                    return decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {};
                 } catch (error) {
                     return {};
                 }
@@ -11171,12 +11459,8 @@ if ($page === 'wawancara') {
                 renderScoreCardRanges(activeScoreCardTemplate, roundedFinal, allAnswered);
             }
 
-            function resetScoreCardModal() {
+            function resetScoreCardDynamicState() {
                 activeScoreCardTemplate = null;
-                activeScoreCardReadOnly = false;
-                if (candidateScoreCardForm) {
-                    candidateScoreCardForm.reset();
-                }
                 if (candidateScoreCardSections) {
                     candidateScoreCardSections.innerHTML = '';
                 }
@@ -11202,42 +11486,53 @@ if ($page === 'wawancara') {
                     candidateScoreCardDecisionNote.value = '';
                     candidateScoreCardDecisionNote.required = false;
                 }
+            }
+
+            function resetScoreCardModal() {
+                activeScoreCardTemplate = null;
+                activeScoreCardReadOnly = false;
+                activeScoreCardSubmissionsByBidang = {};
+                if (candidateScoreCardForm) {
+                    candidateScoreCardForm.reset();
+                }
+                resetScoreCardDynamicState();
                 setScoreCardFormReadOnly(false, false, false);
             }
 
-            function showScoreCardModal(buttonElement) {
-                if (!buttonElement || !candidateScoreCardModal || !candidateScoreCardName || !candidateScoreCardForm) {
-                    return;
-                }
-
-                const candidateBidang = (buttonElement.dataset.candidateBidang || '').trim();
-                const candidateName = (buttonElement.dataset.candidateName || '').trim();
-                const candidateCabang = (buttonElement.dataset.candidateCabang || '').trim();
-                const isReadOnly = String(buttonElement.dataset.scorecardReadonly || '').trim() === '1';
-                const isSubmitted = String(buttonElement.dataset.scorecardSubmitted || '').trim() === '1';
-                const template = getScoreCardTemplateForBidang(candidateBidang);
-                const submission = parseScoreCardSubmission(buttonElement);
+            function loadScoreCardForSelectedBidang(candidateBidang) {
+                const selectedBidang = String(candidateBidang || '').trim();
+                const candidateCabang = candidateScoreCardCabangInput ? String(candidateScoreCardCabangInput.value || '').trim() : '';
+                const submission = selectedBidang !== '' && activeScoreCardSubmissionsByBidang && Object.prototype.hasOwnProperty.call(activeScoreCardSubmissionsByBidang, selectedBidang)
+                    ? activeScoreCardSubmissionsByBidang[selectedBidang]
+                    : {};
                 const hasSubmission = submission && typeof submission === 'object' && Object.keys(submission).length > 0;
-
-                resetScoreCardModal();
+                const isSubmitted = !!(hasSubmission && submission.is_submitted);
+                const isReadOnly = isSubmitted;
+                const template = getScoreCardTemplateForBidang(selectedBidang);
 
                 if (candidateScoreCardBidangInput) {
-                    candidateScoreCardBidangInput.value = candidateBidang;
-                }
-                if (candidateScoreCardNamaInput) {
-                    candidateScoreCardNamaInput.value = candidateName;
-                }
-                if (candidateScoreCardCabangInput) {
-                    candidateScoreCardCabangInput.value = candidateCabang;
-                }
-                if (candidateScoreCardName) {
-                    candidateScoreCardName.textContent = candidateName !== '' ? displayNameText(candidateName) : '-';
+                    candidateScoreCardBidangInput.value = selectedBidang;
                 }
                 if (candidateScoreCardBidangName) {
-                    candidateScoreCardBidangName.textContent = candidateBidang !== '' ? candidateBidang : '-';
+                    candidateScoreCardBidangName.textContent = selectedBidang !== '' ? selectedBidang : '-';
                 }
                 if (candidateScoreCardTitle) {
                     candidateScoreCardTitle.textContent = isReadOnly ? t('wawancara_view_scorecard', 'Lihat Score Card') : (hasSubmission ? t('wawancara_edit_scorecard', 'Edit Score Card') : t('wawancara_input_scorecard', 'Input Score Card'));
+                }
+
+                resetScoreCardDynamicState();
+                setScoreCardFormReadOnly(false, false, hasSubmission);
+
+                if (selectedBidang === '') {
+                    if (candidateScoreCardTemplateState) {
+                        candidateScoreCardTemplateState.textContent = t('wawancara_scorecard_position_unassigned', 'Admin belum menentukan bidang score card kandidat ini.');
+                        candidateScoreCardTemplateState.classList.remove('scorecard-hidden');
+                        candidateScoreCardTemplateState.classList.add('error');
+                    }
+                    if (candidateScoreCardSubmit) {
+                        candidateScoreCardSubmit.disabled = true;
+                    }
+                    return;
                 }
 
                 if (!template || !Array.isArray(template.sections) || template.sections.length === 0) {
@@ -11249,8 +11544,6 @@ if ($page === 'wawancara') {
                     if (candidateScoreCardSubmit) {
                         candidateScoreCardSubmit.disabled = true;
                     }
-                    candidateScoreCardModal.classList.add('open');
-                    syncBodyScrollState();
                     return;
                 }
 
@@ -11277,6 +11570,33 @@ if ($page === 'wawancara') {
                 syncScoreCardDecisionNoteRequirement();
                 updateScoreCardSummary();
                 setScoreCardFormReadOnly(isReadOnly, isSubmitted, hasSubmission);
+            }
+
+            function showScoreCardModal(buttonElement) {
+                if (!buttonElement || !candidateScoreCardModal || !candidateScoreCardName || !candidateScoreCardForm) {
+                    return;
+                }
+
+                const candidateBidang = (buttonElement.dataset.candidateBidang || '').trim();
+                const candidateName = (buttonElement.dataset.candidateName || '').trim();
+                const candidateCabang = (buttonElement.dataset.candidateCabang || '').trim();
+
+                resetScoreCardModal();
+
+                activeScoreCardSubmissionsByBidang = parseScoreCardSubmissionMap(buttonElement);
+
+                let selectedBidang = candidateBidang;
+
+                if (candidateScoreCardNamaInput) {
+                    candidateScoreCardNamaInput.value = candidateName;
+                }
+                if (candidateScoreCardCabangInput) {
+                    candidateScoreCardCabangInput.value = candidateCabang;
+                }
+                if (candidateScoreCardName) {
+                    candidateScoreCardName.textContent = candidateName !== '' ? displayNameText(candidateName) : '-';
+                }
+                loadScoreCardForSelectedBidang(selectedBidang);
 
                 candidateScoreCardModal.classList.add('open');
                 syncBodyScrollState();
@@ -11374,22 +11694,19 @@ if ($page === 'wawancara') {
                 }
 
                 const selectedFilter = String(wawancaraProcessFilter.value || 'all').trim();
-                const candidateItems = document.querySelectorAll('.candidate-item[data-process-lanjut]');
+                const candidateItems = document.querySelectorAll('.candidate-item[data-process-scorecard-has]');
                 const wawancaraCards = document.querySelectorAll('.rekap-card[data-wawancara-card]');
                 let visibleCandidateCount = 0;
 
                 candidateItems.forEach(function (item) {
-                    const isLanjut = item.getAttribute('data-process-lanjut') === '1';
-                    const isScreening = item.getAttribute('data-process-screening') === '1';
+                    const hasScorecard = item.getAttribute('data-process-scorecard-has') === '1';
                     const isScorecardSubmitted = item.getAttribute('data-process-scorecard-submitted') === '1';
                     let shouldShow = true;
 
-                    if (selectedFilter === 'belum_lanjut') {
-                        shouldShow = !isLanjut;
-                    } else if (selectedFilter === 'lanjut') {
-                        shouldShow = isLanjut && !isScreening;
-                    } else if (selectedFilter === 'screening') {
-                        shouldShow = isScreening && !isScorecardSubmitted;
+                    if (selectedFilter === 'scorecard_empty') {
+                        shouldShow = !hasScorecard;
+                    } else if (selectedFilter === 'scorecard_draft') {
+                        shouldShow = hasScorecard && !isScorecardSubmitted;
                     } else if (selectedFilter === 'scorecard_submitted') {
                         shouldShow = isScorecardSubmitted;
                     }
@@ -11401,7 +11718,7 @@ if ($page === 'wawancara') {
                 });
 
                 wawancaraCards.forEach(function (card) {
-                    const cardItems = card.querySelectorAll('.candidate-item[data-process-lanjut]');
+                    const cardItems = card.querySelectorAll('.candidate-item[data-process-scorecard-has]');
                     let hasVisibleItem = false;
                     cardItems.forEach(function (item) {
                         if (item.style.display !== 'none') {
@@ -11454,18 +11771,22 @@ if ($page === 'wawancara') {
             'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
             'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
             'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
+            'filter_scorecard_empty' => ['id' => 'Belum Ada Score Card', 'en' => 'No Score Card Yet'],
+            'filter_scorecard_draft' => ['id' => 'Score Card Draft', 'en' => 'Score Card Draft'],
             'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
             'wawancara_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
             'wawancara_empty_candidates' => ['id' => 'Belum ada kandidat pada bidang ini.', 'en' => 'There are no candidates for this position yet.'],
             'wawancara_votes_count' => ['id' => '{count} suara', 'en' => '{count} votes'],
+            'wawancara_candidates_count' => ['id' => '{count} kandidat', 'en' => '{count} candidates'],
+            'wawancara_forms_count' => ['id' => '{count} form kesediaan', 'en' => '{count} consent forms'],
             'wawancara_form_consent' => ['id' => 'Form Kesediaan', 'en' => 'Consent Form'],
             'wawancara_view_form' => ['id' => 'Lihat Form', 'en' => 'View Form'],
             'wawancara_submit_confirm' => ['id' => 'Setelah submit, score card tidak dapat diubah lagi. Lanjutkan?', 'en' => 'After submission, the score card cannot be changed anymore. Continue?'],
             'wawancara_consent_title' => ['id' => 'Form Kesediaan', 'en' => 'Consent Form'],
-            'wawancara_candidate_doc_label' => ['id' => 'Kandidat: <strong id="candidateDocName">-</strong>', 'en' => 'Candidate: <strong id="candidateDocName">-</strong>'],
-            'wawancara_candidate_view_label' => ['id' => 'Kandidat: <strong id="candidateViewName">-</strong>', 'en' => 'Candidate: <strong id="candidateViewName">-</strong>'],
-            'wawancara_candidate_scorecard_label' => ['id' => 'Kandidat: <strong id="candidateScoreCardName">-</strong>', 'en' => 'Candidate: <strong id="candidateScoreCardName">-</strong>'],
-            'wawancara_position_label' => ['id' => 'Bidang: <strong id="candidateScoreCardBidangName">-</strong>', 'en' => 'Position: <strong id="candidateScoreCardBidangName">-</strong>'],
+            'wawancara_candidate_doc_label' => ['id' => 'Kandidat:', 'en' => 'Candidate:'],
+            'wawancara_candidate_view_label' => ['id' => 'Kandidat:', 'en' => 'Candidate:'],
+            'wawancara_candidate_scorecard_label' => ['id' => 'Kandidat:', 'en' => 'Candidate:'],
+            'wawancara_position_label' => ['id' => 'Bidang:', 'en' => 'Position:'],
             'wawancara_consent_party_label' => ['id' => 'Pihak yang Menyatakan Kesediaan', 'en' => 'Party Declaring Willingness'],
             'wawancara_select_party' => ['id' => 'Pilih pihak', 'en' => 'Choose party'],
             'wawancara_party_name_label' => ['id' => 'Nama Lengkap Pihak', 'en' => 'Party Full Name'],
@@ -11490,6 +11811,7 @@ if ($page === 'wawancara') {
             'wawancara_close' => ['id' => 'Tutup', 'en' => 'Close'],
             'wawancara_input_scorecard' => ['id' => 'Input Score Card', 'en' => 'Input Score Card'],
             'wawancara_score_scale_title' => ['id' => 'Skala Penilaian', 'en' => 'Scoring Scale'],
+            'wawancara_scorecard_position_unassigned' => ['id' => 'Admin belum menentukan bidang score card kandidat ini.', 'en' => 'The admin has not assigned this candidate\'s score card position yet.'],
             'wawancara_scorecard_template_missing' => ['id' => 'Template score card belum tersedia untuk bidang ini.', 'en' => 'The score card template is not available for this position yet.'],
             'wawancara_interview_date' => ['id' => 'Tanggal Wawancara', 'en' => 'Interview Date'],
             'wawancara_location' => ['id' => 'Lokasi', 'en' => 'Location'],
