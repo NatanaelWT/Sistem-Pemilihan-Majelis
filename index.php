@@ -4472,8 +4472,17 @@ function render_kesediaan_recap_table_section(
                                 ? scorecard_selectable_bidang_titles_for_candidate($rowCandidateBranch, $rowAssignedScorecardBidangs)
                                 : [];
                             $rowScorecardAnchorId = 'scorecard-' . substr($rowAssignmentKey, 0, 18);
+                            $rowSearchTextRaw = implode(' ', [
+                                (string)($row['candidate_name'] ?? ''),
+                                (string)($row['candidate_branch'] ?? ''),
+                                (string)($row['candidate_label'] ?? ''),
+                                (string)($row['consent_text'] ?? ''),
+                                (string)($row['latest_interviewer_user'] ?? ''),
+                                (string)($row['latest_updated_at'] ?? ''),
+                                implode(' ', $rowAssignedScorecardBidangs),
+                            ]);
                             ?>
-                            <tr id="<?= h($rowScorecardAnchorId) ?>">
+                            <tr id="<?= h($rowScorecardAnchorId) ?>" data-recap-row="1" data-search-text="<?= h($rowSearchTextRaw) ?>">
                                 <td class="cell-no"><?= h((string)($rowIndex + 1)) ?></td>
                                 <td>
                                     <p class="candidate-name"><?= h_name((string)($row['candidate_name'] ?? '-')) ?></p>
@@ -8870,13 +8879,10 @@ if ($page === 'rekap_kesediaan') {
 
     $kesediaanRecapRows = build_kesediaan_recap_rows($kesediaanRecapFormMap);
     $kesediaanRecapCompleteRows = [];
-    $kesediaanRecapIncompleteRows = [];
     foreach ($kesediaanRecapRows as $rekapRow) {
         if (is_kesediaan_recap_row_complete($rekapRow)) {
             $kesediaanRecapCompleteRows[] = $rekapRow;
-            continue;
         }
-        $kesediaanRecapIncompleteRows[] = $rekapRow;
     }
     $kesediaanRecapTotalCandidates = count($kesediaanRecapRows);
     $kesediaanRecapTotalForms = 0;
@@ -8986,6 +8992,33 @@ if ($page === 'rekap_kesediaan') {
                 border: 1px solid #fecaca;
                 background: #fee2e2;
                 color: #991b1b;
+            }
+            .recap-search-bar {
+                margin-bottom: 16px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 14px;
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                background: #f8fafc;
+            }
+            .recap-search-label {
+                margin: 0;
+                color: #334155;
+                font-size: 13px;
+                font-weight: 800;
+            }
+            .recap-search-input {
+                width: min(100%, 360px);
+                min-height: 38px;
+                border: 1px solid #cbd5e1;
+                border-radius: 9px;
+                background: #fff;
+                color: #0f172a;
+                padding: 0 12px;
+                font-size: 14px;
             }
             .recap-section + .recap-section {
                 margin-top: 22px;
@@ -9169,6 +9202,7 @@ if ($page === 'rekap_kesediaan') {
                 background: #1d4ed8;
             }
             .view-btn:focus-visible,
+            .recap-search-input:focus-visible,
             .scorecard-assign-option input:focus-visible,
             .scorecard-assign-submit:focus-visible,
             .btn-back:focus-visible,
@@ -9304,6 +9338,13 @@ if ($page === 'rekap_kesediaan') {
                     width: 100%;
                     justify-content: flex-start;
                 }
+                .recap-search-bar {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+                .recap-search-input {
+                    width: 100%;
+                }
                 .btn-back {
                     width: 100%;
                 }
@@ -9335,8 +9376,22 @@ if ($page === 'rekap_kesediaan') {
                     <p class="empty" data-i18n="consent_recap_empty">Belum ada form kesediaan yang tersimpan.</p>
                 <?php else: ?>
                     <div class="summary-bar">
-                        <p data-i18n="consent_recap_summary_note">Setiap tabel diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.</p>
+                        <p data-i18n="consent_recap_summary_note">Tabel kandidat 100% bersedia diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.</p>
                     </div>
+                    <div class="recap-search-bar">
+                        <p class="recap-search-label" data-i18n="consent_recap_search_label">Cari kandidat</p>
+                        <input
+                            class="recap-search-input"
+                            type="search"
+                            id="kesediaanRecapSearch"
+                            placeholder="Ketik nama, cabang, pewawancara, atau bidang"
+                            data-i18n-placeholder="consent_recap_search_placeholder"
+                            aria-label="Cari kandidat"
+                            data-i18n-aria-label="consent_recap_search_label"
+                            autocomplete="off"
+                        >
+                    </div>
+                    <p class="empty" id="kesediaanRecapSearchEmpty" style="display:none;" data-i18n="consent_recap_search_empty">Tidak ada kandidat 100% bersedia yang cocok dengan pencarian.</p>
                     <?php render_kesediaan_recap_table_section(
                         $kesediaanRecapCompleteRows,
                         'consent_recap_complete_table_title',
@@ -9347,13 +9402,6 @@ if ($page === 'rekap_kesediaan') {
                         $kesediaanRecapCsrfToken,
                         $kesediaanRecapScorecardAssignmentMap,
                         $kesediaanRecapScorecardSubmissionMap
-                    ); ?>
-                    <?php render_kesediaan_recap_table_section(
-                        $kesediaanRecapIncompleteRows,
-                        'consent_recap_incomplete_table_title',
-                        'Kandidat Tidak 100% Bersedia',
-                        'consent_recap_incomplete_table_empty',
-                        'Belum ada kandidat yang kesediaannya belum 100%.'
                     ); ?>
                 <?php endif; ?>
             </section>
@@ -9394,6 +9442,8 @@ if ($page === 'rekap_kesediaan') {
             const kesediaanRecapTableWrap = document.getElementById('kesediaanRecapTableWrap');
             const kesediaanRecapBody = document.getElementById('kesediaanRecapBody');
             const kesediaanRecapEmpty = document.getElementById('kesediaanRecapEmpty');
+            const kesediaanRecapSearch = document.getElementById('kesediaanRecapSearch');
+            const kesediaanRecapSearchEmpty = document.getElementById('kesediaanRecapSearchEmpty');
 
             function recapT(key, fallback, vars) {
                 if (window.majelisLang && typeof window.majelisLang.t === 'function') {
@@ -9430,6 +9480,48 @@ if ($page === 'rekap_kesediaan') {
 
             function syncRecapBodyScrollState() {
                 document.body.classList.toggle('modal-open', !!(kesediaanRecapModal && kesediaanRecapModal.classList.contains('open')));
+            }
+
+            function normalizeSearchText(value) {
+                return String(value || '').trim().toLocaleLowerCase('id-ID');
+            }
+
+            function applyKesediaanRecapSearch() {
+                const rows = document.querySelectorAll('tr[data-recap-row]');
+                if (!kesediaanRecapSearch || rows.length === 0) {
+                    return;
+                }
+
+                const query = normalizeSearchText(kesediaanRecapSearch.value);
+                let visibleCount = 0;
+
+                rows.forEach(function (row) {
+                    const searchText = normalizeSearchText(row.getAttribute('data-search-text') || row.textContent || '');
+                    const shouldShow = query === '' || searchText.indexOf(query) !== -1;
+                    row.style.display = shouldShow ? '' : 'none';
+                    if (shouldShow) {
+                        visibleCount++;
+                    }
+                });
+
+                document.querySelectorAll('.recap-section').forEach(function (section) {
+                    const sectionRows = section.querySelectorAll('tr[data-recap-row]');
+                    if (sectionRows.length === 0) {
+                        return;
+                    }
+
+                    let hasVisibleRow = false;
+                    sectionRows.forEach(function (row) {
+                        if (row.style.display !== 'none') {
+                            hasVisibleRow = true;
+                        }
+                    });
+                    section.style.display = query !== '' && !hasVisibleRow ? 'none' : '';
+                });
+
+                if (kesediaanRecapSearchEmpty) {
+                    kesediaanRecapSearchEmpty.style.display = query !== '' && visibleCount === 0 ? 'block' : 'none';
+                }
             }
 
             function closeKesediaanRecapModal() {
@@ -9525,17 +9617,23 @@ if ($page === 'rekap_kesediaan') {
                     closeKesediaanRecapModal();
                 }
             });
+
+            if (kesediaanRecapSearch) {
+                kesediaanRecapSearch.addEventListener('input', applyKesediaanRecapSearch);
+                applyKesediaanRecapSearch();
+            }
         </script>
         <?php render_language_script([
             'consent_recap_title' => ['id' => 'Rekap Form Kesediaan', 'en' => 'Consent Form Recap'],
             'consent_recap_intro' => ['id' => 'Menampilkan <strong>{candidates}</strong> kandidat dengan total <strong>{forms}</strong> form kesediaan yang sudah tersimpan.', 'en' => 'Showing <strong>{candidates}</strong> candidates with a total of <strong>{forms}</strong> saved consent forms.'],
             'consent_recap_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
             'consent_recap_empty' => ['id' => 'Belum ada form kesediaan yang tersimpan.', 'en' => 'There are no saved consent forms yet.'],
-            'consent_recap_summary_note' => ['id' => 'Setiap tabel diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.', 'en' => 'Each table is sorted by each candidate\'s latest input time from oldest to newest. The interviewer user column shows the latest form submission for each candidate.'],
+            'consent_recap_summary_note' => ['id' => 'Tabel kandidat 100% bersedia diurutkan berdasarkan waktu input terbaru per kandidat dari paling lama ke paling baru. Kolom user pewawancara menampilkan pengisian form terbaru untuk masing-masing kandidat.', 'en' => 'The 100% willing candidate table is sorted by each candidate\'s latest input time from oldest to newest. The interviewer user column shows the latest form submission for each candidate.'],
+            'consent_recap_search_label' => ['id' => 'Cari kandidat', 'en' => 'Search candidates'],
+            'consent_recap_search_placeholder' => ['id' => 'Ketik nama, cabang, pewawancara, atau bidang', 'en' => 'Type a name, branch, interviewer, or position'],
+            'consent_recap_search_empty' => ['id' => 'Tidak ada kandidat 100% bersedia yang cocok dengan pencarian.', 'en' => 'No 100% willing candidates match the search.'],
             'consent_recap_complete_table_title' => ['id' => 'Kandidat 100% Bersedia', 'en' => '100% Willing Candidates'],
             'consent_recap_complete_table_empty' => ['id' => 'Belum ada kandidat dengan kesediaan 100%.', 'en' => 'There are no candidates with 100% willingness yet.'],
-            'consent_recap_incomplete_table_title' => ['id' => 'Kandidat Tidak 100% Bersedia', 'en' => 'Candidates Not Yet 100% Willing'],
-            'consent_recap_incomplete_table_empty' => ['id' => 'Belum ada kandidat yang kesediaannya belum 100%.', 'en' => 'There are no candidates below 100% willingness.'],
             'consent_recap_candidate' => ['id' => 'Nama Kandidat', 'en' => 'Candidate Name'],
             'consent_recap_willingness' => ['id' => 'Kesediaan', 'en' => 'Willingness'],
             'consent_recap_view_forms' => ['id' => 'Lihat Form', 'en' => 'View Forms'],
@@ -9904,7 +10002,8 @@ if ($page === 'wawancara') {
                 font-size: 13px;
                 font-weight: 700;
             }
-            .wawancara-filter-select {
+            .wawancara-filter-select,
+            .wawancara-search-input {
                 min-width: 220px;
                 border: 1px solid #cbd5e1;
                 border-radius: 8px;
@@ -9915,6 +10014,7 @@ if ($page === 'wawancara') {
                 font-weight: 600;
             }
             .wawancara-filter-select:focus-visible,
+            .wawancara-search-input:focus-visible,
             .doc-icon-btn:focus-visible,
             .doc-scorecard-submit-btn:focus-visible,
             .doc-modal-close:focus-visible,
@@ -10644,6 +10744,10 @@ if ($page === 'wawancara') {
                     width: 100%;
                     min-width: 0;
                 }
+                .wawancara-search-input {
+                    width: 100%;
+                    min-width: 0;
+                }
                 .doc-modal {
                     padding: 10px;
                 }
@@ -10688,8 +10792,18 @@ if ($page === 'wawancara') {
                             <option value="scorecard_draft" <?= $wawancaraProcessFilter === 'scorecard_draft' ? 'selected' : '' ?> data-i18n="filter_scorecard_draft">Score Card Draft</option>
                             <option value="scorecard_submitted" <?= $wawancaraProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?> data-i18n="filter_scorecard_submitted">Sudah Submit Score Card</option>
                         </select>
+                        <input
+                            class="wawancara-search-input"
+                            type="search"
+                            id="wawancaraSearchInput"
+                            placeholder="Cari nama, cabang, bidang, atau status"
+                            data-i18n-placeholder="wawancara_search_placeholder"
+                            aria-label="Cari kandidat wawancara"
+                            data-i18n-aria-label="wawancara_search_label"
+                            autocomplete="off"
+                        >
                     </div>
-                    <div class="wawancara-filter-empty" id="wawancaraFilterEmpty" data-i18n="wawancara_filter_empty">Tidak ada kandidat yang cocok dengan filter proses yang dipilih.</div>
+                    <div class="wawancara-filter-empty" id="wawancaraFilterEmpty" data-i18n="wawancara_filter_empty">Tidak ada kandidat yang cocok dengan filter atau pencarian.</div>
                     <div class="rekap-grid">
                         <article class="rekap-card wawancara-full-card" data-wawancara-card="1">
                             <div class="rekap-head count-only">
@@ -10777,11 +10891,21 @@ if ($page === 'wawancara') {
                                         ];
                                     }
                                     $wawancaraFormItemsJson = h((string)json_encode($wawancaraFormItems, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                                    $wawancaraSearchTextRaw = implode(' ', [
+                                        $wawancaraCandidateName,
+                                        $wawancaraCandidateCabang,
+                                        $wawancaraSelectedScorecardBidang,
+                                        $wawancaraKesediaanBadgeText,
+                                        $wawancaraScorecardBadgeText,
+                                        $wawancaraBidangBadgeText,
+                                        $wawancaraScorecardButtonLabel,
+                                    ]);
                                     ?>
                                     <li
                                         class="candidate-item"
                                         data-process-scorecard-has="<?= $wawancaraHasScorecard ? '1' : '0' ?>"
                                         data-process-scorecard-submitted="<?= $wawancaraScorecardSubmitted ? '1' : '0' ?>"
+                                        data-search-text="<?= h($wawancaraSearchTextRaw) ?>"
                                     >
                                         <div class="candidate-main">
                                             #<?= h((string)($index + 1)) ?> -
@@ -11082,6 +11206,7 @@ if ($page === 'wawancara') {
             const candidateScoreCardDecisionNote = document.getElementById('candidateScoreCardDecisionNote');
             const candidateScoreCardSubmit = document.getElementById('candidateScoreCardSubmit');
             const wawancaraProcessFilter = document.getElementById('wawancaraProcessFilter');
+            const wawancaraSearchInput = document.getElementById('wawancaraSearchInput');
             const wawancaraFilterEmpty = document.getElementById('wawancaraFilterEmpty');
             const singleSubmitPihakSet = new Set(['Diri Sendiri (Kandidat)', 'Ibu', 'Ayah']);
             let activeScoreCardTemplate = null;
@@ -11103,6 +11228,10 @@ if ($page === 'wawancara') {
                 return typeof raw.toLocaleUpperCase === 'function'
                     ? raw.toLocaleUpperCase('id-ID')
                     : raw.toUpperCase();
+            }
+
+            function normalizeSearchText(value) {
+                return String(value || '').trim().toLocaleLowerCase('id-ID');
             }
 
             function buildWawancaraFilterUrl(selectedFilter) {
@@ -11871,6 +12000,7 @@ if ($page === 'wawancara') {
                 }
 
                 const selectedFilter = String(wawancaraProcessFilter.value || 'all').trim();
+                const searchQuery = wawancaraSearchInput ? normalizeSearchText(wawancaraSearchInput.value) : '';
                 const candidateItems = document.querySelectorAll('.candidate-item[data-process-scorecard-has]');
                 const wawancaraCards = document.querySelectorAll('.rekap-card[data-wawancara-card]');
                 let visibleCandidateCount = 0;
@@ -11886,6 +12016,11 @@ if ($page === 'wawancara') {
                         shouldShow = hasScorecard && !isScorecardSubmitted;
                     } else if (selectedFilter === 'scorecard_submitted') {
                         shouldShow = isScorecardSubmitted;
+                    }
+
+                    if (shouldShow && searchQuery !== '') {
+                        const searchText = normalizeSearchText(item.getAttribute('data-search-text') || item.textContent || '');
+                        shouldShow = searchText.indexOf(searchQuery) !== -1;
                     }
 
                     item.style.display = shouldShow ? '' : 'none';
@@ -11917,6 +12052,10 @@ if ($page === 'wawancara') {
                 });
                 applyWawancaraProcessFilter();
             }
+            if (wawancaraSearchInput) {
+                wawancaraSearchInput.addEventListener('input', applyWawancaraProcessFilter);
+                applyWawancaraProcessFilter();
+            }
 
             function sanitizeSafeUrl(value) {
                 const raw = String(value || '').trim();
@@ -11944,6 +12083,8 @@ if ($page === 'wawancara') {
             'wawancara_title' => ['id' => 'Halaman Wawancara', 'en' => 'Interview Page'],
             'wawancara_back' => ['id' => 'Kembali ke Halaman Bidang', 'en' => 'Back to Positions'],
             'wawancara_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
+            'wawancara_search_label' => ['id' => 'Cari kandidat wawancara', 'en' => 'Search interview candidates'],
+            'wawancara_search_placeholder' => ['id' => 'Cari nama, cabang, bidang, atau status', 'en' => 'Search name, branch, position, or status'],
             'filter_all' => ['id' => 'Semua', 'en' => 'All'],
             'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
             'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
@@ -11951,7 +12092,7 @@ if ($page === 'wawancara') {
             'filter_scorecard_empty' => ['id' => 'Belum Ada Score Card', 'en' => 'No Score Card Yet'],
             'filter_scorecard_draft' => ['id' => 'Score Card Draft', 'en' => 'Score Card Draft'],
             'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
-            'wawancara_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
+            'wawancara_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter atau pencarian.', 'en' => 'No candidates match the filter or search.'],
             'wawancara_empty_candidates' => ['id' => 'Belum ada kandidat pada bidang ini.', 'en' => 'There are no candidates for this position yet.'],
             'wawancara_votes_count' => ['id' => '{count} suara', 'en' => '{count} votes'],
             'wawancara_candidates_count' => ['id' => '{count} pengisian score card', 'en' => '{count} score card entries'],
