@@ -9689,7 +9689,7 @@ if ($page === 'wawancara') {
     $wawancaraKesediaanFormMap = load_kesediaan_form_map();
     $wawancaraScorecardSubmissionMap = load_scorecard_submission_map();
     $wawancaraScorecardBidangAssignmentMap = load_scorecard_bidang_assignment_map();
-    $wawancaraEmptyMessage = 'Belum ada kandidat 100% bersedia untuk ditampilkan.';
+    $wawancaraEmptyMessage = 'Belum ada kandidat 100% bersedia dengan bidang score card yang sudah ditentukan admin.';
     $wawancaraCandidates = [];
 
     if ($method === 'POST' && $wawancaraAction === 'mark_lanjut_proses') {
@@ -9868,6 +9868,10 @@ if ($page === 'wawancara') {
         $candidateAssignmentKey = scorecard_bidang_assignment_key($candidateName, $candidateCabang);
         $candidateScorecardAssignment = (array)($wawancaraScorecardBidangAssignmentMap[$candidateAssignmentKey] ?? []);
         $selectedScorecardBidangs = scorecard_bidang_assignment_titles($candidateScorecardAssignment);
+        if ($selectedScorecardBidangs === []) {
+            continue;
+        }
+
         $assignedScorecardSubmissions = [];
         foreach ($selectedScorecardBidangs as $assignedScorecardBidang) {
             $assignedScorecardBidang = trim((string)$assignedScorecardBidang);
@@ -9887,8 +9891,7 @@ if ($page === 'wawancara') {
             }
         }
 
-        $displayScorecardBidangs = $selectedScorecardBidangs !== [] ? $selectedScorecardBidangs : [''];
-        foreach ($displayScorecardBidangs as $selectedScorecardBidang) {
+        foreach ($selectedScorecardBidangs as $selectedScorecardBidang) {
             $selectedScorecardBidang = trim((string)$selectedScorecardBidang);
             $selectedScorecardSubmission = $selectedScorecardBidang !== ''
                 ? scorecard_submission_for_candidate_bidang(
