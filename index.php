@@ -10914,7 +10914,6 @@ if ($page === 'wawancara') {
                                             #<?= h((string)($index + 1)) ?> -
                                             <?= h_name($wawancaraCandidateName) ?>
                                             (<?= h($wawancaraCandidateCabang) ?>)
-                                            - <span data-i18n="wawancara_forms_count" data-i18n-vars="<?= h((string)json_encode(['count' => (string)$wawancaraTotalFormCount], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>"><?= h((string)$wawancaraTotalFormCount) ?> form kesediaan</span>
                                         </div>
                                         <div class="flag-state">
                                             <span class="flag-badge<?= h($wawancaraKesediaanBadgeClass) ?>">
