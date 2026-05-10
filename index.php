@@ -7456,7 +7456,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
     $asalCabang = trim((string)$authUser['asal_cabang']);
     $isDashboardPage = $page === 'dashboard';
     $isKandidatPage = $page === 'kandidat';
-    $kandidatAllowedProcessFilters = ['all', 'belum_lanjut', 'lanjut', 'screening', 'scorecard_submitted'];
+    $kandidatAllowedProcessFilters = ['all', 'scorecard_submitted'];
     $kandidatProcessFilter = normalize_query_choice((string)($_GET['kandidat_filter'] ?? ''), $kandidatAllowedProcessFilters, 'all');
     $kandidatPageParams = ['page' => 'kandidat'];
     if ($kandidatProcessFilter !== 'all') {
@@ -7715,48 +7715,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             $flaggingErrorMessage = 'Sesi tidak valid. Muat ulang halaman kandidat lalu coba lagi.';
         } elseif ($targetBidang === '' || $targetKandidatNama === '' || $targetKandidatCabang === '') {
             $flaggingErrorMessage = 'Data kandidat untuk flagging tidak lengkap.';
-        } elseif ($normalizedFlagType !== 'scorecard_submit' && !is_candidate_in_top10_summary($bidangSummary, $targetBidang, $targetKandidatNama, $targetKandidatCabang)) {
-            $flaggingErrorMessage = 'Flagging hanya dapat dilakukan pada kandidat Top 10 di bidang terkait.';
-        } elseif ($normalizedFlagType === 'lanjut') {
-            if (!$isKandidatPage) {
-                $flaggingErrorMessage = 'Perubahan status lanjut proses hanya dapat dilakukan dari halaman kandidat admin.';
-            } else {
-                $candidateKey = flagging_candidate_key($targetBidang, $targetKandidatNama, $targetKandidatCabang);
-                $candidateFlagMap = load_flagging_map();
-                $candidateFlag = (array)($candidateFlagMap[$candidateKey] ?? []);
-                $isCurrentlyLanjut = !empty($candidateFlag['lanjut_proses']);
-                $candidateKesediaanMap = load_kesediaan_form_map();
-                $candidateKesediaanKey = kesediaan_candidate_key($targetKandidatNama, $targetKandidatCabang);
-                $candidateForms = (array)($candidateKesediaanMap[$candidateKesediaanKey] ?? []);
-                $candidateFormCount = 0;
-                foreach ($candidateForms as $candidateFormItem) {
-                    if (!is_array($candidateFormItem)) {
-                        continue;
-                    }
-                    $candidateFormStatus = normalize_kesediaan_status((string)($candidateFormItem['status_kesediaan'] ?? ''));
-                    if ($candidateFormStatus === '') {
-                        continue;
-                    }
-                    $candidateFormCount++;
-                }
-
-                if (!$isCurrentlyLanjut && $candidateFormCount <= 0) {
-                    $flaggingErrorMessage = 'Lanjut proses hanya dapat ditandai jika kandidat sudah memiliki form kesediaan.';
-                } else {
-                    $flagResult = mark_candidate_lanjut_proses(
-                        $targetBidang,
-                        $targetKandidatNama,
-                        $targetKandidatCabang,
-                        $username
-                    );
-
-                    if (!($flagResult['ok'] ?? false)) {
-                        $flaggingErrorMessage = (string)($flagResult['message'] ?? 'Gagal menandai lanjut proses.');
-                    } else {
-                        $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Status lanjut proses berhasil diperbarui.');
-                    }
-                }
-            }
+        } elseif ($normalizedFlagType !== 'scorecard_submit') {
+            $flaggingErrorMessage = 'Fungsi lanjut proses dan tandai screening sudah dinonaktifkan dari halaman kandidat.';
         } elseif ($normalizedFlagType === 'scorecard_submit') {
             $flagResult = cancel_submitted_scorecard_submission(
                 $targetBidang,
@@ -7770,24 +7730,9 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             } else {
                 $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Submit score card berhasil dibatalkan.');
             }
-        } else {
-            $flagResult = toggle_candidate_flag_status(
-                $targetBidang,
-                $targetKandidatNama,
-                $targetKandidatCabang,
-                $flagType,
-                $username
-            );
-
-            if (!($flagResult['ok'] ?? false)) {
-                $flaggingErrorMessage = (string)($flagResult['message'] ?? 'Proses flagging gagal disimpan.');
-            } else {
-                $flaggingSuccessMessage = (string)($flagResult['message'] ?? 'Status flagging berhasil diperbarui.');
-            }
         }
     }
 
-    $flaggingMap = load_flagging_map();
     $scorecardSubmissionMap = load_scorecard_submission_map();
     $kesediaanFormMap = load_kesediaan_form_map();
     $scorecardBidangAssignmentMap = load_scorecard_bidang_assignment_map();
@@ -8512,12 +8457,9 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                     <p class="empty" data-i18n="dashboard_empty_votes">Belum ada data pemilihan yang tersimpan.</p>
                 <?php else: ?>
                     <div class="kandidat-filter-bar">
-                        <p class="kandidat-filter-label" data-i18n="dashboard_candidate_filter_label">Filter proses kandidat</p>
-                        <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter proses kandidat" data-i18n-aria-label="dashboard_candidate_filter_label">
+                        <p class="kandidat-filter-label" data-i18n="dashboard_candidate_filter_label">Filter kandidat</p>
+                        <select class="kandidat-filter-select" id="kandidatProcessFilter" aria-label="Filter kandidat" data-i18n-aria-label="dashboard_candidate_filter_label">
                             <option value="all" <?= $kandidatProcessFilter === 'all' ? 'selected' : '' ?> data-i18n="filter_all">Semua</option>
-                            <option value="belum_lanjut" <?= $kandidatProcessFilter === 'belum_lanjut' ? 'selected' : '' ?> data-i18n="filter_not_advanced">Belum Lanjut Proses</option>
-                            <option value="lanjut" <?= $kandidatProcessFilter === 'lanjut' ? 'selected' : '' ?> data-i18n="filter_advanced">Lanjut Proses</option>
-                            <option value="screening" <?= $kandidatProcessFilter === 'screening' ? 'selected' : '' ?> data-i18n="filter_screening">Lolos Screening</option>
                             <option value="scorecard_submitted" <?= $kandidatProcessFilter === 'scorecard_submitted' ? 'selected' : '' ?> data-i18n="filter_scorecard_submitted">Sudah Submit Score Card</option>
                         </select>
                     </div>
@@ -8551,9 +8493,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                         $candidateCount = (int)($candidate['count'] ?? 0);
                                         $candidateFlagKey = flagging_candidate_key((string)$bidang, $candidateNama, $candidateCabang);
                                         $candidateAnchorId = 'flag-' . substr($candidateFlagKey, 0, 18);
-                                        $candidateFlag = (array)($flaggingMap[$candidateFlagKey] ?? []);
-                                        $isLanjutProses = !empty($candidateFlag['lanjut_proses']);
-                                        $isLolosScreening = !empty($candidateFlag['lolos_screening']) && $isLanjutProses;
                                         $candidateKesediaanKey = kesediaan_candidate_key($candidateNama, $candidateCabang);
                                         $candidateForms = (array)($kesediaanFormMap[$candidateKesediaanKey] ?? []);
                                         $candidateTotalFormCount = 0;
@@ -8577,7 +8516,6 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                             $candidateKesediaanBadgeText = $candidateBersediaCount . '/' . $candidateTotalFormCount . ' bersedia';
                                             $candidateKesediaanBadgeClass = $candidateBersediaCount >= $candidateTotalFormCount ? ' kesediaan-complete' : ' kesediaan-progress';
                                         }
-                                        $canToggleCandidateLanjutProses = $isLanjutProses || $candidateTotalFormCount > 0;
                                         $candidateScorecardAssignmentKey = scorecard_bidang_assignment_key($candidateNama, $candidateCabang);
                                         $candidateScorecardAssignment = (array)($scorecardBidangAssignmentMap[$candidateScorecardAssignmentKey] ?? []);
                                         $candidateAssignedScorecardBidangs = scorecard_bidang_assignment_titles($candidateScorecardAssignment);
@@ -8630,29 +8568,13 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                             ? 'Bidang Score Card: ' . implode(', ', $candidateAssignedScorecardBidangs)
                                             : 'Bidang Score Card Belum Ditentukan';
                                         $candidateAssignedScorecardBadgeClass = $candidateAssignedScorecardBidangs !== [] ? ' interviewer-on' : '';
-                                        $screeningActionType = $isScorecardSubmitted ? 'scorecard_submit' : 'screening';
-                                        $screeningActionTargetBidang = $isScorecardSubmitted && $candidateSubmittedScorecardBidangs !== []
+                                        $scorecardCancelSubmitTargetBidang = $isScorecardSubmitted && $candidateSubmittedScorecardBidangs !== []
                                             ? (string)$candidateSubmittedScorecardBidangs[0]
                                             : (string)$bidang;
-                                        $screeningButtonClass = $isLolosScreening || $isScorecardSubmitted ? ' active-screening' : '';
-                                        $screeningButtonDisabled = !$isLanjutProses && !$isScorecardSubmitted;
-                                        $screeningButtonTitle = 'Status lanjut proses masih belum aktif.';
-                                        if ($isScorecardSubmitted) {
-                                            $screeningButtonTitle = 'Batalkan status submit score card kandidat ini agar dapat diedit lagi.';
-                                        } elseif ($isLolosScreening) {
-                                            $screeningButtonTitle = 'Batalkan status screening kandidat ini.';
-                                        } elseif ($isLanjutProses) {
-                                            $screeningButtonTitle = 'Tandai status screening kandidat ini.';
-                                        }
-                                        $screeningButtonLabel = $isScorecardSubmitted
-                                            ? 'Batal Submit Score Card'
-                                            : ($isLolosScreening ? 'Batal Screening' : 'Tandai Screening');
                                         ?>
                                         <li
                                             class="candidate-item"
                                             id="<?= h($candidateAnchorId) ?>"
-                                            data-process-lanjut="<?= $isLanjutProses ? '1' : '0' ?>"
-                                            data-process-screening="<?= $isLolosScreening ? '1' : '0' ?>"
                                             data-process-scorecard-submitted="<?= $isScorecardSubmitted ? '1' : '0' ?>"
                                         >
                                             <div class="candidate-main">
@@ -8662,83 +8584,38 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                                                 - <?= h((string)$candidateCount) ?> suara
                                             </div>
                                             <div class="flag-state">
-                                                <?php if ($isLolosScreening): ?>
                                                 <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
                                                     <?= h($candidateKesediaanBadgeText) ?>
                                                 </span>
                                                 <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
                                                     <?= h($candidateAssignedScorecardBadgeText) ?>
-                                                </span>
-                                                <span class="flag-badge on screening-on" data-i18n="filter_screening">
-                                                    Lolos Screening
                                                 </span>
                                                 <span class="flag-badge<?= h($candidateScorecardBadgeClass) ?>">
                                                     <?= h($candidateScorecardBadgeText) ?>
                                                 </span>
-                                                <?php elseif (!$isLanjutProses): ?>
-                                                <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
-                                                    <?= h($candidateKesediaanBadgeText) ?>
-                                                </span>
-                                                <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
-                                                    <?= h($candidateAssignedScorecardBadgeText) ?>
-                                                </span>
-                                                <span class="flag-badge" data-i18n="filter_not_advanced">
-                                                    Belum Lanjut Proses
-                                                </span>
-                                                <?php else: ?>
-                                                <span class="flag-badge<?= h($candidateKesediaanBadgeClass) ?>">
-                                                    <?= h($candidateKesediaanBadgeText) ?>
-                                                </span>
-                                                <span class="flag-badge<?= h($candidateAssignedScorecardBadgeClass) ?>">
-                                                    <?= h($candidateAssignedScorecardBadgeText) ?>
-                                                </span>
-                                                <span class="flag-badge on" data-i18n="filter_advanced">
-                                                    Lanjut Proses
-                                                </span>
-                                                <?php endif; ?>
                                             </div>
+                                            <?php if ($isScorecardSubmitted): ?>
                                             <div class="candidate-actions">
-                                                <?php if (!$isLolosScreening): ?>
                                                 <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
                                                     <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
                                                     <input type="hidden" name="dashboard_action" value="toggle_candidate_flag">
-                                                    <input type="hidden" name="target_bidang" value="<?= h((string)$bidang) ?>">
+                                                    <input type="hidden" name="target_bidang" value="<?= h($scorecardCancelSubmitTargetBidang) ?>">
                                                     <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
                                                     <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
                                                     <button
-                                                        class="flag-btn<?= $isLanjutProses ? ' active-lanjut' : '' ?>"
+                                                        class="flag-btn active-screening"
                                                         type="submit"
                                                         name="flag_type"
-                                                        value="lanjut"
-                                                        <?= $canToggleCandidateLanjutProses ? '' : 'disabled' ?>
-                                                        data-lang-title-id="<?= h(!$canToggleCandidateLanjutProses ? 'Tombol aktif setelah ada minimal 1 form kesediaan.' : ($isLanjutProses ? 'Batalkan status lanjut proses kandidat ini.' : 'Tandai kandidat ini sebagai lanjut proses.')) ?>"
-                                                        data-lang-title-en="<?= h(!$canToggleCandidateLanjutProses ? 'This button becomes active after at least 1 consent form is submitted.' : ($isLanjutProses ? 'Cancel this candidate\\\'s advanced-process status.' : 'Mark this candidate as advanced.')) ?>"
-                                                        title="<?= !$canToggleCandidateLanjutProses ? 'Tombol aktif setelah ada minimal 1 form kesediaan.' : ($isLanjutProses ? 'Batalkan status lanjut proses kandidat ini.' : 'Tandai kandidat ini sebagai lanjut proses.') ?>"
+                                                        value="scorecard_submit"
+                                                        data-lang-title-id="Batalkan status submit score card kandidat ini agar dapat diedit lagi."
+                                                        data-lang-title-en="Cancel this candidate's score card submission status so it can be edited again."
+                                                        title="Batalkan status submit score card kandidat ini agar dapat diedit lagi."
                                                     >
-                                                        <span data-lang-text-id="<?= h($isLanjutProses ? 'Batalkan' : 'Lanjut Proses') ?>" data-lang-text-en="<?= h($isLanjutProses ? 'Cancel' : 'Advance') ?>"><?= $isLanjutProses ? 'Batalkan' : 'Lanjut Proses' ?></span>
-                                                    </button>
-                                                </form>
-                                                <?php endif; ?>
-                                                <form class="flag-form" method="post" action="<?= h(app_index_url($kandidatPageParams) . '#' . $candidateAnchorId) ?>">
-                                                    <input type="hidden" name="csrf_token" value="<?= h($dashboardLogoutToken) ?>">
-                                                    <input type="hidden" name="dashboard_action" value="toggle_candidate_flag">
-                                                    <input type="hidden" name="target_bidang" value="<?= h($screeningActionTargetBidang) ?>">
-                                                    <input type="hidden" name="target_kandidat_nama" value="<?= h($candidateNama) ?>">
-                                                    <input type="hidden" name="target_kandidat_cabang" value="<?= h($candidateCabang) ?>">
-                                                    <button
-                                                        class="flag-btn<?= $screeningButtonClass ?>"
-                                                        type="submit"
-                                                        name="flag_type"
-                                                        value="<?= h($screeningActionType) ?>"
-                                                        <?= $screeningButtonDisabled ? 'disabled' : '' ?>
-                                                        data-lang-title-id="<?= h($screeningButtonTitle) ?>"
-                                                        data-lang-title-en="<?= h($isScorecardSubmitted ? 'Cancel this candidate\\\'s score card submission status so it can be edited again.' : ($isLolosScreening ? 'Cancel this candidate\\\'s screening status.' : ($isLanjutProses ? 'Mark this candidate as screened.' : 'Advanced-process status is still inactive.'))) ?>"
-                                                        title="<?= h($screeningButtonTitle) ?>"
-                                                    >
-                                                        <span data-lang-text-id="<?= h($screeningButtonLabel) ?>" data-lang-text-en="<?= h($isScorecardSubmitted ? 'Cancel Score Card Submission' : ($isLolosScreening ? 'Cancel Screening' : 'Mark Screening')) ?>"><?= h($screeningButtonLabel) ?></span>
+                                                        <span data-lang-text-id="Batal Submit Score Card" data-lang-text-en="Cancel Score Card Submission">Batal Submit Score Card</span>
                                                     </button>
                                                 </form>
                                             </div>
+                                            <?php endif; ?>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
@@ -8820,23 +8697,15 @@ if ($page === 'dashboard' || $page === 'kandidat') {
 
                 const selectedFilter = String(kandidatProcessFilter.value || 'all').trim();
 
-                const candidateItems = document.querySelectorAll('.candidate-item[data-process-lanjut]');
+                const candidateItems = document.querySelectorAll('.candidate-item[data-process-scorecard-submitted]');
                 const kandidatCards = document.querySelectorAll('.rekap-card[data-kandidat-card]');
                 let visibleCandidateCount = 0;
 
                 candidateItems.forEach(function (item) {
-                    const isLanjut = item.getAttribute('data-process-lanjut') === '1';
-                    const isScreening = item.getAttribute('data-process-screening') === '1';
                     const isScorecardSubmitted = item.getAttribute('data-process-scorecard-submitted') === '1';
                     let shouldShow = true;
 
-                    if (selectedFilter === 'belum_lanjut') {
-                        shouldShow = !isLanjut;
-                    } else if (selectedFilter === 'lanjut') {
-                        shouldShow = isLanjut && !isScreening;
-                    } else if (selectedFilter === 'screening') {
-                        shouldShow = isScreening && !isScorecardSubmitted;
-                    } else if (selectedFilter === 'scorecard_submitted') {
+                    if (selectedFilter === 'scorecard_submitted') {
                         shouldShow = isScorecardSubmitted;
                     }
 
@@ -8847,7 +8716,7 @@ if ($page === 'dashboard' || $page === 'kandidat') {
                 });
 
                 kandidatCards.forEach(function (card) {
-                    const cardItems = card.querySelectorAll('.candidate-item[data-process-lanjut]');
+                    const cardItems = card.querySelectorAll('.candidate-item[data-process-scorecard-submitted]');
                     let hasVisibleItem = false;
 
                     cardItems.forEach(function (item) {
@@ -8894,11 +8763,8 @@ if ($page === 'dashboard' || $page === 'kandidat') {
             'dashboard_progress_users_started' => ['id' => 'User sudah vote: <strong>{started}/{total}</strong>', 'en' => 'Users who have voted: <strong>{started}/{total}</strong>'],
             'dashboard_progress_users_completed' => ['id' => 'User tuntas semua bidang: <strong>{done}/{total}</strong>', 'en' => 'Users who completed all positions: <strong>{done}/{total}</strong>'],
             'dashboard_empty_votes' => ['id' => 'Belum ada data pemilihan yang tersimpan.', 'en' => 'No voting data has been saved yet.'],
-            'dashboard_candidate_filter_label' => ['id' => 'Filter proses kandidat', 'en' => 'Candidate process filter'],
+            'dashboard_candidate_filter_label' => ['id' => 'Filter kandidat', 'en' => 'Candidate filter'],
             'filter_all' => ['id' => 'Semua', 'en' => 'All'],
-            'filter_not_advanced' => ['id' => 'Belum Lanjut Proses', 'en' => 'Not advanced yet'],
-            'filter_advanced' => ['id' => 'Lanjut Proses', 'en' => 'Advanced'],
-            'filter_screening' => ['id' => 'Lolos Screening', 'en' => 'Passed Screening'],
             'filter_scorecard_submitted' => ['id' => 'Sudah Submit Score Card', 'en' => 'Score Card Submitted'],
             'dashboard_candidate_filter_empty' => ['id' => 'Tidak ada kandidat yang cocok dengan filter proses yang dipilih.', 'en' => 'No candidates match the selected process filter.'],
             'dashboard_rekap_total_votes' => ['id' => '{count} vote', 'en' => '{count} votes'],
